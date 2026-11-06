@@ -1,0 +1,23 @@
+# Private reference songs and stems: never commit
+/tests/audio/private/
+*.stems/
+.vocalmatch_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Plugin build output (milestone 5)
+/plugin/build/
+/plugin/cmake-build-*/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
