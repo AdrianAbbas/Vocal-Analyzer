@@ -37,3 +37,7 @@ def test_synth_command(tmp_path):
     assert main(["synth", "--out", str(tmp_path / "s.wav"), "--duration", "2"]) == 0
     x, fs = sf.read(tmp_path / "s.wav")
     assert fs == FS and len(x) == 2 * FS
+
+
+def test_selftest_command():
+    assert main(["selftest"]) == 0

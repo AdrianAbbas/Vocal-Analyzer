@@ -23,7 +23,26 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 Until milestone 4, `--reference` must already be an **isolated vocal stem**:
 no source separation runs yet.
 
-## Quick start
+## Install (macOS, Linux)
+
+Download **`VocalMatch-Analyzer`** from the latest successful [CI run](https://github.com/AdrianAbbas/vocal-analyzer/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess).
+The run's summary page has the direct link. Unzip it, then follow `INSTALL.txt`:
+
+```bash
+bash install.sh
+```
+
+The installer:
+- finds Python 3.10 or newer;
+- installs the `vocalmatch` command into a private environment and links it into `~/.local/bin`;
+- runs `vocalmatch selftest` and prints PASS or FAIL.
+
+CI runs exactly this on every push before it publishes the zip: a quarantined download is unzipped, installed, used and uninstalled, on macOS and Linux.
+Tagged versions (`v*`) are also published as a GitHub Release, which needs no GitHub sign-in:
+`https://github.com/AdrianAbbas/vocal-analyzer/releases/latest/download/VocalMatch-Analyzer.zip`.
+The AU/VST3 plug-in joins the same package in milestone 5.
+
+## Develop
 
 ```bash
 python -m pip install -e "analysis[dev]"

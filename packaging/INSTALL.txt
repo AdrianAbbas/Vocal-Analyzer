@@ -1,0 +1,43 @@
+VOCAL MATCH - analyzer (command-line), macOS and Linux
+
+This package installs the `vocalmatch` command: it analyses the lead vocal of a
+reference and writes a preset (EQ + compressor so far) for your own vocal, and can
+render your dry vocal through it. The AU / VST3 plug-in is not built yet (milestone 5);
+when it is, it will ship in this same package.
+
+NEEDS
+  Python 3.10 or newer (macOS's built-in python3 is 3.9, too old). If the installer
+  says none was found: install Python from https://www.python.org/downloads/ or run
+  "brew install python@3.12", then run the installer again.
+  Internet access during install (numpy, scipy and friends come from PyPI).
+
+INSTALL
+  1. Open Terminal (Applications > Utilities > Terminal).
+  2. Type "bash " (with a space), drag install.sh from this folder into the
+     Terminal window, and press Return.
+  3. Answer Y if it offers to add ~/.local/bin to your PATH.
+  4. Wait for "Vocal Match analyzer is installed and passed its self-test."
+  5. Open a new Terminal window so the PATH change takes effect.
+
+  It installs into a private environment (macOS: ~/Library/Application Support/
+  VocalMatch, Linux: ~/.local/share/vocalmatch) and links ~/.local/bin/vocalmatch.
+  Nothing is installed system-wide and no password is asked for.
+
+USE
+  vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav \
+                     --out preset.json --render matched.wav
+
+  --reference must be an isolated vocal stem (an a cappella) for now: separating the
+  vocal out of a full song arrives in milestone 4. WAV, FLAC and MP3 are read.
+  preset.json is plain text: every setting is in real units (Hz, dB, ms) and can be
+  edited, then re-rendered:
+
+  vocalmatch render --preset preset.json --dry my_vocal.wav --out out.wav
+  vocalmatch selftest          checks the installation (about 10 s)
+  vocalmatch --help            all commands
+
+UPDATE
+  Download the newer package and run its install.sh: it replaces the old copy.
+
+UNINSTALL
+  bash uninstall.sh            (add --purge to also delete the logs)

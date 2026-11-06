@@ -78,3 +78,11 @@ def test_numpy_values_are_converted():
     validate_preset_dict(d)
     assert type(d["effects"]["eq"]["bands"][0]["enabled"]) is bool
     assert d["diagnostics"]["curve"] == [0.0, 0.0, 0.0]
+
+
+def test_packaged_schema_matches_shared():
+    """Installed copies read vocalmatch/data/preset.schema.json; it must equal /shared's."""
+    packaged = REPO / "analysis" / "vocalmatch" / "data" / "preset.schema.json"
+    assert packaged.read_text(encoding="utf-8") == (REPO / "shared" / "preset.schema.json").read_text(encoding="utf-8"), (
+        "copy shared/preset.schema.json to analysis/vocalmatch/data/"
+    )

@@ -1,13 +1,23 @@
 name: CI
-
+# Same pipeline shape as AdrianAbbas/LIMINAL's "Native build": test, package, install the
+# package the way a user does (quarantined download on macOS), and only then publish the
+# installable zip. Tags v* also publish it as a GitHub Release (a stable download link).
+# Commits whose message contains [skip ci] do not run.
 on:
   push:
   pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
     name: Python tests (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -25,4 +35,80 @@ jobs:
         run: python -m pip install -e "analysis[dev]"
       - name: Unit + synthetic round-trip tests
         run: python -m pytest
-  # Plugin build (macOS + Windows) and pluginval are added in milestone 5.
+
+  package:
+    # Runs only when every test job passed.
+    name: Package + user install test (${{ matrix.os }})
+    needs: python
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Shell scripts lint
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/*.sh
+      - name: Build the package (wheel + install.sh + uninstall.sh + INSTALL.txt)
+        run: bash scripts/package.sh dist
+      - name: Install the downloaded package with install.sh, use it, uninstall it
+        run: bash scripts/ci-user-install-test.sh dist/VocalMatch-Analyzer.zip build/ci-logs
+      # One installable zip (the analyzer is pure Python: the same package serves macOS and
+      # Linux). Uploaded from the macOS job, only after its install test passed.
+      - name: Upload installable package
+        id: upload
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalMatch-Analyzer
+          path: dist/VocalMatch-Analyzer.zip
+          if-no-files-found: error
+      - name: Install link in the run summary
+        if: runner.os == 'macOS'
+        run: |
+          {
+            echo "## Install Vocal Match analyzer"
+            echo ""
+            echo "**[Download VocalMatch-Analyzer](${{ steps.upload.outputs.artifact-url }})** (sign in to GitHub), unzip it, then in Terminal:"
+            echo ""
+            echo '```bash'
+            echo 'bash install.sh'
+            echo '```'
+            echo ""
+            echo "Tested on this run: quarantined download -> \`install.sh\` -> \`vocalmatch selftest\` -> analyze/render -> \`uninstall.sh\` (macOS and Linux)."
+            echo "See INSTALL.txt in the zip for details."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalMatch-install-logs-${{ runner.os }}
+          path: |
+            build/ci-logs/
+            dist/wheel-build.txt
+          if-no-files-found: warn
+
+  release:
+    # Tagged commits (v*) publish the same package as a GitHub Release: no sign-in needed, and
+    # https://github.com/AdrianAbbas/vocal-analyzer/releases/latest/download/VocalMatch-Analyzer.zip
+    # always points at the newest one.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VocalMatch-Analyzer
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" VocalMatch-Analyzer.zip --repo "$GITHUB_REPOSITORY" --title "Vocal Match $GITHUB_REF_NAME" --generate-notes
+  # Plugin build (macOS universal AU/VST3 + Windows VST3) and pluginval join in milestone 5;
+  # the plug-in bundles will then ship in the same zip, installed by the same install.sh.

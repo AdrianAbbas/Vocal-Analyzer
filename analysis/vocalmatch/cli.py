@@ -78,6 +78,13 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return status
 
 
+def _cmd_selftest(args: argparse.Namespace) -> int:
+    from .selftest import run
+
+    print("Vocal Match self-test: synthetic vocal through a known EQ + compressor, then analysed")
+    return 0 if run() else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vocalmatch", description="Estimate a vocal effect chain from a reference.")
     p.add_argument("--version", action="version", version=f"vocalmatch {__version__}")
@@ -109,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("validate", help="check preset files against shared/preset.schema.json")
     v.add_argument("presets", nargs="+")
     v.set_defaults(func=_cmd_validate)
+    t = sub.add_parser("selftest", help="check the installation: analyse a synthetic vocal with known settings")
+    t.set_defaults(func=_cmd_selftest)
     return p
 
 

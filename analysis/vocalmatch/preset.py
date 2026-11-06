@@ -223,11 +223,17 @@ def _json_default(o: Any) -> Any:
 
 # ---------------------------------------------------------------- validation
 def schema_path() -> Path:
+    """The preset schema: $VOCALMATCH_SCHEMA, else the repository's
+    shared/preset.schema.json (development checkout), else the copy shipped
+    inside the package (installed copies; kept identical by a test)."""
     env = os.environ.get("VOCALMATCH_SCHEMA")
     if env:
         return Path(env)
     # analysis/vocalmatch/preset.py -> repo root
-    return Path(__file__).resolve().parents[2] / "shared" / "preset.schema.json"
+    repo_copy = Path(__file__).resolve().parents[2] / "shared" / "preset.schema.json"
+    if repo_copy.is_file():
+        return repo_copy
+    return Path(__file__).resolve().parent / "data" / "preset.schema.json"
 
 
 def load_schema() -> dict[str, Any]:
