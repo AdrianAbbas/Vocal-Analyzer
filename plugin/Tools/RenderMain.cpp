@@ -4,6 +4,7 @@
 //
 //   VocalMatchRender --preset preset.json --in dry.wav --out out.wav
 //                    [--match 100] [--tail 0] [--block 512] [--param id=value ...]
+//   VocalMatchRender [--preset preset.json] --snapshot editor.png   (the editor as an image)
 //
 // The preset goes through the plug-in's "Load preset" code (loadPresetFile), then each
 // --param sets one parameter in real units. Output: 32-bit float WAV, stereo.
@@ -31,6 +32,7 @@ int main (int argc, char* argv[])
     int block = 512;
     juce::StringArray extraParams;
     bool listParams = false;
+    juce::File snapshotFile;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -44,6 +46,7 @@ int main (int argc, char* argv[])
         else if (arg == "--block") block = next().getIntValue();
         else if (arg == "--param") extraParams.add (next());
         else if (arg == "--list-params") listParams = true;
+        else if (arg == "--snapshot") snapshotFile = juce::File::getCurrentWorkingDirectory().getChildFile (next());
         else return fail ("unknown argument " + arg);
     }
 
@@ -55,7 +58,7 @@ int main (int argc, char* argv[])
                 std::cout << withId->getParameterID() << "\t" << p->getName (64) << "\t" << p->getText (p->getDefaultValue(), 32) << "\n";
         return 0;
     }
-    if (inFile == juce::File() || outFile == juce::File() || block < 1)
+    if (inFile == juce::File() && snapshotFile == juce::File())
         return fail ("usage: --in dry.wav --out out.wav [--preset preset.json] [--match pct] [--tail s] [--block n] [--param id=value]");
 
     if (presetFile != juce::File())
@@ -70,6 +73,23 @@ int main (int argc, char* argv[])
             return fail ("no parameter " + id);
         processor.setParameterValue (id, kv.fromFirstOccurrenceOf ("=", false, false).getFloatValue());
     }
+
+    if (snapshotFile != juce::File())
+    {
+        // The editor as a PNG (after --preset, so the estimate markers show).
+        std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+        snapshotFile.deleteFile();
+        juce::FileOutputStream stream (snapshotFile);
+        juce::PNGImageFormat png;
+        if (! stream.openedOk() || ! png.writeImageToStream (image, stream))
+            return fail ("cannot write " + snapshotFile.getFullPathName());
+        std::cout << "wrote " << snapshotFile.getFullPathName() << " (" << editor->getWidth() << " x " << editor->getHeight() << ")\n";
+        if (inFile == juce::File())
+            return 0;
+    }
+    if (outFile == juce::File() || block < 1)
+        return fail ("--out and a positive --block are needed to render");
 
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();

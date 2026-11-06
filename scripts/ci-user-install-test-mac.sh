@@ -117,7 +117,7 @@ if [[ -x "$cmd" ]]; then
         "$cmd" --version
         "$cmd" synth --out dry.wav --seed 3 --duration 6
         "$cmd" synth --out ref.wav --seed 4 --duration 6
-        "$cmd" analyze --reference ref.wav --dry dry.wav --out preset.json --render matched.wav
+        "$cmd" analyze --reference ref.wav --dry dry.wav --out preset.json --render matched.wav --refine 10
         "$cmd" validate preset.json
         if [[ -n "$render" ]]; then
             "$render" --preset preset.json --in dry.wav --out plugin.wav

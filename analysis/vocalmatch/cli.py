@@ -14,14 +14,33 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     from .chain import render
     from .pipeline import analyze
 
+    from .separation import SeparationUnavailable, demucs_available, select_sections, separate
+
     dry, fs = load_audio(args.dry)
-    reference, _ = load_audio(args.reference, target_fs=fs)
-    print(
-        "note: source separation (Demucs) arrives in milestone 4; --reference is analysed as-is "
-        "and should be an isolated vocal stem.",
-        file=sys.stderr,
-    )
-    preset = analyze(reference, dry, fs, reference_name=Path(args.reference).name, tempo_bpm=args.tempo)
+    separation = {}
+    use_demucs = args.separate == "yes" or (args.separate == "auto" and demucs_available())
+    if use_demucs:
+        try:
+            vocals_path, rest_path, cached = separate(args.reference)
+        except SeparationUnavailable as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"vocal stem: {vocals_path}{' (cached)' if cached else ''}")
+        vocals, _ = load_audio(vocals_path, target_fs=fs)
+        rest, _ = load_audio(rest_path, target_fs=fs)
+        sel = select_sections(vocals, rest, fs)
+        print(f"analysing {sel.kept_s:.1f} s of {sel.total_s:.1f} s (sections where the vocal is clearly present)")
+        reference = sel.audio
+        separation = {"stem": str(vocals_path), "cached": cached, **sel.diagnostics}
+    else:
+        reference, _ = load_audio(args.reference, target_fs=fs)
+        if args.separate == "auto":
+            print("note: Demucs is not installed, so --reference is analysed as-is and should be an isolated "
+                  "vocal stem (install it with: pip install \"vocalmatch[separation]\").", file=sys.stderr)
+    preset = analyze(reference, dry, fs, reference_name=Path(args.reference).name, tempo_bpm=args.tempo,
+                     passes=args.passes, refine_evals=args.refine)
+    if separation:
+        preset.diagnostics["separation"] = separation
     preset.save(args.out)
     print(f"wrote {args.out}")
     e = preset.effects
@@ -90,7 +109,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 def _cmd_selftest(args: argparse.Namespace) -> int:
     from .selftest import run
 
-    print("Vocal Match self-test: synthetic vocal through a known EQ + compressor, then analysed")
+    print("Vocal Match self-test: synthetic vocal through a known EQ + compressor, then analysed (about a minute)")
     return 0 if run() else 1
 
 
@@ -100,12 +119,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     a = sub.add_parser("analyze", help="estimate a preset from a reference vocal and your dry vocal")
-    a.add_argument("--reference", required=True, help="reference vocal (WAV/FLAC/MP3); an isolated stem until M4")
+    a.add_argument("--reference", required=True, help="reference song or vocal stem (WAV/FLAC/MP3)")
     a.add_argument("--dry", required=True, help="your dry vocal")
     a.add_argument("--out", required=True, help="output preset.json")
     a.add_argument("--render", help="also render the dry vocal through the preset to this file")
     a.add_argument("--tempo", type=float, default=None, help="song tempo in BPM (optional)")
     a.add_argument("--tail", type=float, default=0.0, help="seconds of tail to render after the dry ends")
+    a.add_argument("--separate", choices=("auto", "yes", "no"), default="auto",
+                   help="extract the vocal from a full song with Demucs: auto = when Demucs is installed (default); "
+                        "no = --reference is already an isolated vocal stem")
+    a.add_argument("--refine", type=int, default=60, metavar="N",
+                   help="refinement optimizer evaluations after the estimators (about 1 s each; 0 = off; default 60)")
+    a.add_argument("--passes", type=int, default=2, help="estimator passes over the chain (default 2)")
     a.set_defaults(func=_cmd_analyze)
 
     r = sub.add_parser("render", help="process a dry vocal with a preset")

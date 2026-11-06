@@ -5,6 +5,8 @@ import pytest
 
 from cases import M3_CASES, run_m3_case
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.parametrize("name", list(M3_CASES))
 def test_m3_roundtrip(name):

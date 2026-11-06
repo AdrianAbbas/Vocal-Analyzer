@@ -2,7 +2,8 @@
 
 An AU (`aufx Vcmt Wnwd`, "Windward Audio: Vocal Match") and VST3 effect, bundle ID
 `com.windwardaudio.vocalmatch`. It implements the chain in [`/shared/CHAIN.md`](../shared/CHAIN.md),
-the same algorithms as the Python reference chain, and loads the analyzer's `preset.json`
+the same algorithms as the Python reference chain (input gain → EQ → compressor → saturation →
+de-esser → delay → reverb → doubler/width → output gain), and loads the analyzer's `preset.json`
 ([`/shared/preset.schema.json`](../shared/preset.schema.json)).
 
 ```
@@ -40,7 +41,7 @@ python -m pytest tests/parity -v -s
 
 It renders the same input and presets through `VocalMatchRender` and the Python chain and
 requires the residual below -40 dB (the spec) and below -80 dB (both run in double precision,
-so anything above that is a real divergence). Currently about -143 dB.
+so anything above that is a real divergence). Currently about -145 dB for every effect.
 
 ## Package and install (macOS)
 

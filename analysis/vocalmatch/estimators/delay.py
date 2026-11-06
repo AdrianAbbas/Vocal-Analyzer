@@ -63,7 +63,8 @@ def find_delay_time(reference: np.ndarray, dry: np.ndarray, fs: float, exclude_f
     in the lag domain, and z(lag) = (ref - max(dry, 0)) / robust spread. An echo is a sharp
     peak the dry vocal does not have, in at least two bands. A sung note correlates with
     itself at multiples of its pitch period; that shows in both signals and is removed by
-    the comparison. Candidates that carry the reverb's signature (other peaks at the same
+    the comparison (when the dry vocal is the same performance) and by the consistency test
+    (when it is not: consistent_over_time). Candidates that carry the reverb's signature (other peaks at the same
     predelay plus the other FDN line lengths: its early reflections) are rejected."""
     from scipy.ndimage import maximum_filter1d
 
@@ -106,6 +107,8 @@ def find_delay_time(reference: np.ndarray, dry: np.ndarray, fs: float, exclude_f
                 return True
         return False
 
+    band_sigs = [band_filter(ref, band, fs) for band in BANDS_HZ]
+    inconsistent = []
     rejected = []
     order = np.argsort(-cand)
     for d in order[:200]:
@@ -114,15 +117,72 @@ def find_delay_time(reference: np.ndarray, dry: np.ndarray, fs: float, exclude_f
             break
         if any(abs(d - r) <= 5 for r in rejected):
             continue
+        if any(abs(d - r) <= 5 for r in inconsistent):
+            continue
         if exclude_fdn and reverb_signature(d):
             rejected.append(d)
+            continue
+        if len(inconsistent) >= MAX_INCONSISTENT:
+            break
+        w = signed[d - 3 : d + 4]
+        d_exact = d - 3 + int(np.argmax(w))
+        if not consistent_over_time(band_sigs, d_exact, fs):
+            inconsistent.append(d)
             continue
         # the echo's own lag: the strongest sample of the (unfiltered) excess near the peak
         w = signed[d - 3 : d + 4]
         d = d - 3 + int(np.argmax(w))
         return d, {"peak_lag_ms": round(d * 1000 / fs, 2), "peak_score": round(float(cand[d]), 1),
-                   "bands_above": int(strong[d]), "rejected_as_reverb_ms": [round(r * 1000 / fs, 1) for r in rejected]}
-    return None, {"peak_lag_ms": None, "rejected_as_reverb_ms": [round(r * 1000 / fs, 1) for r in rejected]}
+                   "bands_above": int(strong[d]), "rejected_as_reverb_ms": [round(r * 1000 / fs, 1) for r in rejected],
+                   "rejected_as_inconsistent_ms": [round(r * 1000 / fs, 1) for r in inconsistent]}
+    return None, {"peak_lag_ms": None, "rejected_as_reverb_ms": [round(r * 1000 / fs, 1) for r in rejected],
+                  "rejected_as_inconsistent_ms": [round(r * 1000 / fs, 1) for r in inconsistent]}
+
+
+CHUNK_S = 2.0
+CHUNK_MIN_Z = 1.5
+CHUNK_MIN_FRACTION = 0.8
+CHUNK_MIN_MEDIAN = 2.0
+MAX_INCONSISTENT = 30
+
+
+def chunk_scores(band_sigs: list[np.ndarray], lag: int, fs: float) -> list[float]:
+    """Per chunk of the reference (CHUNK_S, or 3 lags if longer; loud chunks only), the median
+    over bands of the lag-high-passed autocorrelation at *lag*, in units of its spread."""
+    from scipy.signal import fftconvolve
+
+    half = max(2, int(0.002 * fs))
+    w = 4 * half
+    n = int(max(CHUNK_S, 3 * lag / fs) * fs)
+    mono = band_sigs[0]
+    starts = list(range(lag + w, len(mono) - n + 1, n))
+    if not starts:
+        return []
+    energy = np.array([sum(float(np.dot(b[a : a + n], b[a : a + n])) for b in band_sigs) for a in starts])
+    loud = energy > energy.max() * 10 ** (-20 / 10)
+    out = []
+    for a, ok in zip(starts, loud):
+        if not ok:
+            continue
+        zs = []
+        for y in band_sigs:
+            seg = y[a : a + n]
+            ctx = y[a - lag - w : a + n - lag + w]
+            c = fftconvolve(ctx, seg[::-1], mode="valid")[::-1] / (float(np.dot(seg, seg)) + 1e-12)
+            hp = _lag_highpass(c, half)  # index k <-> lag (lag - w + k)
+            zs.append(float(hp[w - 2 : w + 3].max() / (np.std(hp) + 1e-12)))
+        out.append(float(np.median(zs)))
+    return out
+
+
+def consistent_over_time(band_sigs: list[np.ndarray], lag: int, fs: float) -> bool:
+    """An echo copies all the material, so its peak is there in every part of the song; a
+    peak from the voice's own pitch periodicity (notes whose period divides the lag) is not."""
+    z = chunk_scores(band_sigs, lag, fs)
+    if len(z) < 2:
+        return True  # too short to tell
+    z = np.array(z)
+    return bool(np.mean(z >= CHUNK_MIN_Z) >= CHUNK_MIN_FRACTION and np.median(z) >= CHUNK_MIN_MEDIAN)
 
 
 def snap_to_tempo(time_ms: float, tempo_bpm: float | None) -> tuple[float, str | None]:

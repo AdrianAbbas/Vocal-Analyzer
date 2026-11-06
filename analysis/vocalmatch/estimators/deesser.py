@@ -170,7 +170,7 @@ class _Simulator:
 
 
 def estimate_deesser(reference: np.ndarray, pre: np.ndarray, fs: float, decimation: int = 8, polish_evals: int = 40,
-                     post=None) -> DeEsserEstimate:
+                     post=None, gate: bool = True) -> DeEsserEstimate:
     """*pre*: the signal entering the de-esser (the dry vocal through the estimated EQ,
     compressor and saturation). *post*: optional linear function (2, n) -> (2, n), the
     effects estimated after it."""
@@ -213,8 +213,9 @@ def estimate_deesser(reference: np.ndarray, pre: np.ndarray, fs: float, decimati
     # its place: a clear improvement over none, absolute and relative.
     explained = 1.0 - e_fin / max(none_err, 1e-9)
     confidence = float(np.clip(explained, 0.0, 1.0) * np.exp(-e_fin / 1.0))
-    enabled = bool(r >= 0.5 and none_err - e_fin >= MIN_IMPROVEMENT_DB and e_fin <= (1.0 - MIN_IMPROVEMENT_REL) * none_err
-                   and confidence >= MIN_CONFIDENCE)
+    enabled = bool(r >= 0.5 and (not gate or (none_err - e_fin >= MIN_IMPROVEMENT_DB
+                                              and e_fin <= (1.0 - MIN_IMPROVEMENT_REL) * none_err
+                                              and confidence >= MIN_CONFIDENCE)))
     d = DeEsser(enabled=enabled, confidence=round(confidence, 3), frequency_hz=round(f, 1), threshold_db=round(t, 2),
                 reduction_db=round(r, 2) if enabled else 0.0)
     if not enabled:

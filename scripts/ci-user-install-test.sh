@@ -40,7 +40,7 @@ use="$(mktemp -d)"
     "$cmd" --version
     "$cmd" synth --out dry.wav --seed 3 --duration 6
     "$cmd" synth --out ref.wav --seed 3 --duration 6   # same take: analysis must find ~no processing
-    "$cmd" analyze --reference ref.wav --dry dry.wav --out preset.json --render matched.wav
+    "$cmd" analyze --reference ref.wav --dry dry.wav --out preset.json --render matched.wav --refine 10
     "$cmd" validate preset.json
     "$cmd" render --preset preset.json --dry dry.wav --out out.wav --tail 1
     python3 - <<'PY'

@@ -3,7 +3,8 @@ VOCAL MATCH by Windward Audio - your vocal, processed like the reference
 
 This folder holds the two halves of Vocal Match:
   Vocal Match.component / Vocal Match.vst3   the plug-in: input gain, EQ, compressor,
-                                             output gain, every setting automatable
+                                             saturation, de-esser, delay, reverb,
+                                             doubler/width, output gain
   vocalmatch-*.whl                           the analyzer (the `vocalmatch` command): it
                                              listens to a reference vocal and your dry
                                              vocal and writes preset.json for the plug-in
@@ -34,8 +35,9 @@ INSTALL
 
 MAKE A PRESET
   vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav --out preset.json
-  --reference must be an isolated vocal stem (an a cappella) for now: separating the
-  vocal out of a full song arrives in a later version. WAV, FLAC and MP3 are read.
+  --reference can be the full song if Demucs is installed (run the installer with
+  --with-separation, about 1 GB more); otherwise give an isolated vocal stem (an a
+  cappella). WAV, FLAC and MP3 are read. Analysis takes one to a few minutes.
 
 GARAGEBAND
   Settings > Audio/MIDI: tick "Audio Units". Restart GarageBand.

@@ -87,7 +87,8 @@ def signal_features(x: np.ndarray, fs: float) -> np.ndarray:
     return _features(peak, energy, e_low, e_high)
 
 
-def estimate_saturation(reference: np.ndarray, pre: np.ndarray, fs: float, post=None) -> SaturationEstimate:
+def estimate_saturation(reference: np.ndarray, pre: np.ndarray, fs: float, post=None,
+                        min_confidence: float = MIN_CONFIDENCE) -> SaturationEstimate:
     """*pre*: the signal entering the saturation (dry vocal through the estimated EQ and
     compressor). *post*: optional linear function (2, n) -> (2, n), the effects estimated after
     the saturation."""
@@ -139,7 +140,7 @@ def estimate_saturation(reference: np.ndarray, pre: np.ndarray, fs: float, post=
     # Detection threshold: mild saturation moves these features less than small errors of the
     # compressor estimate do (attack time changes the crest factor too), so a weak fit is
     # treated as no saturation (milestone 4's joint refinement revisits this).
-    enabled = mix_pct >= 1.0 and confidence >= MIN_CONFIDENCE
+    enabled = mix_pct >= 1.0 and confidence >= min_confidence
     if not enabled:
         confidence = float(np.exp(-none_err / 1.0))
     sat = Saturation(enabled=enabled, confidence=round(confidence, 3), drive_db=round(drive, 2) if enabled else 0.0,

@@ -174,8 +174,9 @@ fi
 bold "7. Next steps"
 cat <<'NEXT'
   Make a preset with the analyzer (Terminal):
-    vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav --out preset.json
-  (--reference must be an isolated vocal stem until source separation lands.)
+    vocalmatch analyze --reference song.mp3 --dry my_vocal.wav --out preset.json
+  (--reference: the full song if Demucs is installed (bash install.sh --with-separation),
+   otherwise an isolated vocal stem. It takes one to a few minutes.)
 
   GarageBand
     1. Open GarageBand > Settings > Audio/MIDI and make sure "Audio Units" is ticked.

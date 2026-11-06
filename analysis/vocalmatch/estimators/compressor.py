@@ -40,6 +40,8 @@ LEVEL_FEATURES = ("peak", "rms_long")
 SHAPE_FEATURES = ("crest", "contrast", "delta")
 FEATURE_WEIGHTS = {"peak": 1.0, "rms_long": 1.0, "crest": 2.0, "contrast": 2.0, "delta": 1.0}
 
+MIN_CONFIDENCE = 0.05
+
 BOUNDS = {
     "threshold_db": (-60.0, 0.0),
     "ratio": (1.0, 20.0),
@@ -294,8 +296,13 @@ def estimate_compressor(
     # discounted by how well the final fit matches.
     explained = 1.0 - dist / max(d_none, 1e-9)
     comp.confidence = round(float(np.clip(explained, 0.0, 1.0) * np.exp(-dist / 2.0)), 3)
+    if comp.confidence < MIN_CONFIDENCE:
+        # The fit explains (almost) nothing: the two performances simply differ in dynamics.
+        # No compression, only the level match (make-up of the uncompressed statistics).
+        comp.ratio, comp.makeup_db = 1.0, round(float(np.clip(m0, *BOUNDS["makeup_db"])), 2)
     if comp.ratio < 1.05:
-        comp.enabled = False
+        comp.enabled = comp.confidence >= MIN_CONFIDENCE or abs(comp.makeup_db) >= 0.1
+        comp.ratio = 1.0
     return CompressorEstimate(
         compressor=comp,
         distance=dist,

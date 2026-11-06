@@ -16,16 +16,13 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 |---|---|
 | 1. Scaffold, preset schema, Python reference chain + render | done |
 | 2. EQ + compression estimators, synthetic round-trip tests | done |
-| 5 (early). JUCE plug-in shell: AU + VST3, the chain so far, Load preset, Match amount, Python vs C++ check | done |
-| 3. Reverb, delay, saturation, de-esser, width estimators | – |
-| 4. Demucs separation, refinement optimizer, listening tests | – |
+| 5 (early). JUCE plug-in: AU + VST3, the whole chain, Load preset, Match amount, Python vs C++ check | done |
+| 3. Saturation, de-esser, delay, reverb, doubler/width estimators (+ each effect in the plug-in) | done |
+| 4. Demucs separation + section selection, refinement optimizer, listening-test tool | done (listening itself: yours, see below) |
 | 6–7. In-plugin Analyze, ONNX | – |
 
 The plug-in was moved ahead of milestones 3–4 so it can be tried in GarageBand early;
-each later effect is added to the Python chain and the plug-in together.
-
-Until milestone 4, `--reference` must already be an **isolated vocal stem**:
-no source separation runs yet.
+every effect is in the Python chain and the plug-in alike, checked sample by sample.
 
 ## Install on macOS (plug-in + analyzer)
 
@@ -68,8 +65,15 @@ python -m pip install -e "analysis[dev]"
 ```
 
 ```bash
-python -m vocalmatch analyze --reference ref_vocal.wav --dry myvocal.wav --out preset.json --render matched.wav
+python -m vocalmatch analyze --reference song.mp3 --dry myvocal.wav --out preset.json --render matched.wav
 ```
+
+`--reference` is the full song when Demucs is installed (`pip install -e "analysis[separation]"`,
+or `bash install.sh --with-separation`): the vocal is separated (stems cached in `song.mp3.stems/`)
+and only the sections where it is clearly present are analysed. Without Demucs, or with
+`--separate no`, give an isolated vocal stem. `--refine N` sets the refinement budget
+(default 60 whole-chain evaluations, about a minute; 0 = off). Long material is analysed on
+45 s of excerpts.
 
 ```bash
 python -m vocalmatch render --preset preset.json --dry myvocal.wav --out out.wav --tail 2 --match 100
@@ -100,6 +104,19 @@ runs the estimators on the result, and checks that they recover the settings:
 |---|---|
 | EQ | each 1/3-octave band 100 Hz – 12.5 kHz within ±1.5 dB (broadband offset removed, see below) |
 | Compressor | threshold ±2 dB, ratio ±20 %, attack and release within ×/÷ 2, make-up ±1.5 dB, and the rendered output's envelope statistics within 0.25 dB of the reference |
+| Delay | time ±1 ms, feedback ±5, mix ±2 (percentage points), high-cut ×/÷ 1.25 |
+| Reverb | decay ±20 %, predelay ±15 ms, mix ±3, damping ×/÷ 1.5 |
+| Doubler / width | mix ±5, width ±10 |
+| Saturation | drive ±3 dB, mix ±10 |
+| De-esser | frequency ±15 %, threshold ±3 dB, reduction ±2 dB |
+| Whole chain (all eight effects at once, with refinement) | refinement lowers the distance by 30 %; EQ ±2.5 dB per band; compressor threshold ±2 dB, make-up ±1.5 dB, ratio ±30 %; delay time ±1 ms, mix ±3; reverb decay ±25 %, mix ±4; doubler mix ±5, width ±15; de-esser found |
+
+The milestone-3 cases put each effect behind a realistic EQ + compressor (`tests/roundtrip/cases.py`).
+The milestone-3 and whole-chain round trips take minutes (`-m slow`); CI runs them on one Linux job.
+
+The **Python vs C++ check** (`tests/parity`) renders the same presets through the plug-in's own processor
+(`VocalMatchRender`) and the Python chain: every effect, edge cases included (half-sample delay times,
+odd predelays, clipping drive, match amount, odd block sizes). Residual about −145 dB (spec: −40 dB).
 
 ## How the estimators work
 
@@ -123,12 +140,68 @@ Broadband level can't be observed from spectral shape. By convention the estimat
 
 Threshold is relative to the level entering the compressor, so it transfers to your own vocal level.
 
+The milestone-3 estimators all follow the compressor's recipe: level-independent features on the
+reference, the chain's own effect simulated on (the dry vocal through the estimates of everything before
+it), and the settings fitted until the features match. Nothing needs sample alignment.
+
+- **Delay** (`delay.py`): an echo is a sharp autocorrelation peak at its lag that the dry vocal lacks, in
+  at least two of four bands, *throughout* the song (a sung note's own pitch periodicity only shows in a
+  few places); the reverb's early reflections (its signature: predelay + its delay lines) are rejected.
+  Feedback, mix and high-cut from the echo train's band autocorrelations at D, 2D, 3D. With `--tempo`
+  the time snaps to a note value within 2 %.
+- **Reverb** (`reverb.py`): the fastest level drops (L(t + τ) − L(t), τ = 30 ms … 1 s, lowest quantiles,
+  four bands): without reverb the level falls into the noise after a phrase, with it only as fast as the
+  tail decays. One FDN render per (decay, damping) serves every predelay and mix.
+- **Doubler / width** (`width.py`): side-to-mid energy over loud frames (doubler voices) and tail frames
+  (the reverb's side, scaled by the width), and the left-right correlation. A mono reference has none.
+- **Saturation** (`saturation.py`): crest factor and high-frequency tilt in level-ranked frames (tanh
+  flattens peaks and adds harmonics only when loud). Estimated in every pass, but switched on only by
+  the refinement's whole-chain model selection: mild saturation and small compressor-estimate errors look
+  alike to a single-effect fit.
+- **De-esser** (`deesser.py`): the shapes (relative to the median) of the high-band level and tilt
+  distributions; the de-esser caps their top, an EQ only shifts them. The effects after it enter as an
+  energy kernel of their impulse response. The threshold may not go below the median high-band level
+  (that would be a static high cut, the EQ's job).
+
+They run as a **coordinate descent** over the chain, two passes (`pipeline.py`): time-based effects, EQ
+(against the dry vocal through those, which commute with it; the de-esser's spectral change handed over
+as a correction), compressor (scored after the effects that follow it), saturation, de-esser.
+
+**Refinement** (`refine.py`): a block-coordinate Nelder–Mead over each effect's settings against one
+alignment-free distance of the *whole-chain render* to the reference: multi-resolution (256/1024/4096)
+1/3-octave spectral statistics, loudness statistics, and every estimator's features. First it tries
+switching on saturation and a de-esser that the estimators left off; it keeps them only when the
+distance drops by 3 % and 0.1. A result is kept only if it lowers the distance.
+
+**Separation** (`separation.py`): Demucs `htdemucs` (`--two-stems vocals`), stems cached next to the song
+with its SHA-256. Sections (cut at silences) are kept when mostly voiced and the vocal stem is not mostly
+bleed (median vocal-to-accompaniment ratio ≥ −15 dB), each with up to 2 s of the silence after it (tails).
+
+## Listening tests (real songs)
+
+Put your songs and dry takes in `tests/audio/private/` (git-ignored), list them in
+`tests/audio/private/manifest.json` (format in `tests/listening/run.py`), then:
+
+```bash
+python tests/listening/run.py
+```
+
+For each song it writes the preset, loudness-matched excerpts of the reference vocal, your dry vocal and
+the match (also at 50 %), an A/B file and a report with every estimate, its confidence and a rating
+sheet. The listening is yours to do: nothing in CI has real songs, and the synthetic round trips are
+the automated measure.
+
 ## Known limitations
 
 - The round-trip tests follow the spec: the analyzer gets the very dry signal the reference was made from.
-  With a *different* performance (`report.py --unpaired`) the estimates are much less precise.
-  EQ differences below ~500 Hz are dominated by the pitch range sung, and compression ratio is confounded by the performance's own dynamics.
-  Milestone 4's listening tests are where this gets tuned.
-- The knee is fixed at 6 dB during estimation.
-- Saturation, de-esser, delay, reverb and doubler are implemented in the chain but not estimated yet.
-  They are written disabled with `confidence: 0`.
+  With a *different* performance (`report.py --unpaired`, and real use) the estimates are much less precise:
+  EQ differences below ~500 Hz are dominated by the pitch range sung, and compressor ratio is confounded by
+  the performance's own dynamics (when the fit explains nothing, the compressor is set to 1:1 with only a
+  level match). The time-based effects (delay, reverb, width) hold up best unpaired.
+- Reverb damping is the least certain setting; the whole-chain round trip does not check it.
+- Mild saturation (a few dB of drive) is hard to tell from compressor detail; it is only switched on when
+  the whole chain clearly matches better with it.
+- The compressor knee is fixed at 6 dB during estimation.
+- Analysis takes one to a few minutes (Python); the refinement budget (`--refine`) is most of it.
+- Windows: the analyzer's tests run on Windows; the plug-in is built for macOS (AU + VST3) and Linux (VST3,
+  for the parity check), not yet for Windows.

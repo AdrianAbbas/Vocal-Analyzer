@@ -16,10 +16,12 @@ Within a pass the order follows what each effect leaves visible in the reference
    of the saturation and de-esser (from their current estimates) is handed over as a
    correction, so it is not fitted as EQ.
 3. Compressor on the EQ'd dry vocal, its statistics taken after the effects that follow it.
-4. Saturation, then de-esser.
+4. Saturation, then de-esser. The saturation estimate is recorded but left off: only the
+   refinement's whole-chain model selection switches it on (see refine.py).
 
-Source separation (Demucs) and the refinement optimizer arrive in milestone 4; until then
-*reference* must be an isolated vocal stem.
+Then (milestone 4, optional) the refinement optimizer adjusts everything jointly against the
+whole-chain render. *reference* is an isolated vocal stem: separation.py extracts it from a
+full song first.
 """
 
 from __future__ import annotations
@@ -97,15 +99,24 @@ def analyze(
     reference_name: str = "",
     tempo_bpm: float | None = None,
     passes: int = 2,
+    refine_evals: int = 0,
+    max_seconds: float | None = 45.0,
 ) -> Preset:
+    """*refine_evals* > 0 runs the refinement optimizer (refine.py) after the estimators,
+    with that many full-chain evaluations (about 1 s each for 12 s of audio). Signals longer
+    than *max_seconds* are analysed on excerpts of that total length (analysis_excerpt)."""
     ref = to_stereo(reference)
     x = to_stereo(dry)
+    full_s = ref.shape[1] / fs
+    if max_seconds:
+        ref = analysis_excerpt(ref, fs, max_seconds)
+        x = analysis_excerpt(x, fs, max_seconds)
     preset = Preset(
         reference=Reference(
             filename=reference_name,
             sample_rate_hz=int(fs),
             tempo_bpm=tempo_bpm,
-            duration_s=round(ref.shape[1] / fs, 3),
+            duration_s=round(full_s, 3),
         )
     )
     e = preset.effects
@@ -151,11 +162,37 @@ def analyze(
         e.compressor = timed("compressor", estimate_compressor, ref, chain.upto(x, "compressor"), fs, **comp_kwargs).compressor
 
         # 4. Saturation, then de-esser.
-        e.saturation = timed("saturation", estimate_saturation, ref, chain.upto(x, "saturation"), fs, post).saturation
+        # Saturation is estimated (see diagnostics) but left off: mild saturation and small
+        # errors of the compressor estimate look alike to any single-effect fit, so whether
+        # it is there is decided against the whole chain by the refinement (model selection).
+        sat = timed("saturation", estimate_saturation, ref, chain.upto(x, "saturation"), fs, post).saturation
+        diag["saturation"] = {**diag["saturation"], "estimate": {"drive_db": sat.drive_db, "mix_pct": sat.mix_pct,
+                                                                  "confidence": sat.confidence, "enabled": sat.enabled}}
+        e.saturation.enabled = False
         e.deesser = timed("deesser", estimate_deesser, ref, chain.upto(x, "deesser"), fs, post=post).deesser
 
+    if refine_evals > 0:
+        from .refine import refine
+
+        res = refine(preset, ref, x, fs, max_evals=refine_evals)
+        preset.effects = res.preset.effects
+        diag["refinement"] = res.diagnostics
+        timings["refinement"] = round(res.seconds, 2)
+    _round_settings(preset)
     preset.diagnostics = {**diag, "passes": passes, "seconds": timings}
     return preset
+
+
+def _round_settings(preset: Preset) -> None:
+    """Readable numbers in preset.json (the plug-in reads them exactly as written)."""
+    e = preset.effects
+    for name in ("compressor", "saturation", "deesser", "delay", "reverb", "doubler"):
+        fx = getattr(e, name)
+        for k, v in vars(fx).items():
+            if isinstance(v, float) and k != "confidence":
+                setattr(fx, k, round(v, 3))
+    for b in e.eq.bands:
+        b.gain_db = round(b.gain_db, 2)
 
 
 def _nonlinear(z: np.ndarray, e: Effects, fs: float) -> np.ndarray:
@@ -164,3 +201,34 @@ def _nonlinear(z: np.ndarray, e: Effects, fs: float) -> np.ndarray:
     if e.deesser.enabled:
         z = process_deesser(z, fs, e.deesser)
     return z
+
+
+EXCERPT_WINDOW_S = 9.0
+
+
+def analysis_excerpt(x: np.ndarray, fs: float, max_seconds: float) -> np.ndarray:
+    """At most *max_seconds* of a (2, n) signal for analysis: windows of about 9 s spread
+    evenly over it, each cut at the quietest 10 ms frame near its ends (so the joins fall in
+    pauses, not in the middle of a note or a reverb tail). The estimators use distributions
+    of features, which this sample keeps; the analysis time stays bounded for whole songs."""
+    n = x.shape[1]
+    total = int(max_seconds * fs)
+    if n <= total:
+        return x
+    win = int(EXCERPT_WINDOW_S * fs)
+    k = max(1, total // win)
+    hop = int(round(0.01 * fs))
+    e = np.convolve(np.mean(x * x, axis=0), np.ones(hop) / hop, mode="same")
+    search = int(1.5 * fs)
+
+    def quiet(at):
+        a, b = max(0, at - search), min(n, at + search)
+        return a + int(np.argmin(e[a:b]))
+
+    pieces = []
+    for i in range(k):
+        centre = int((i + 0.5) * n / k)
+        a, b = quiet(max(0, centre - win // 2)), quiet(min(n, centre + win // 2))
+        if b > a:
+            pieces.append(x[:, a:b])
+    return np.concatenate(pieces, axis=1) if pieces else x[:, :total]

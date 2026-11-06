@@ -1,7 +1,8 @@
 VOCAL MATCH - analyzer (command-line), macOS and Linux
 
 This package installs the `vocalmatch` command: it analyses the lead vocal of a
-reference and writes a preset (EQ + compressor so far) for your own vocal, and can
+reference and writes a preset (EQ, compressor, saturation, de-esser, delay, reverb,
+doubler/width) for your own vocal, and can
 render your dry vocal through it. On a Mac, download VocalMatch-macOS-Universal instead:
 it holds the AU / VST3 plug-in and this analyzer, installed together by install-mac.sh.
 
@@ -27,13 +28,14 @@ USE
   vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav \
                      --out preset.json --render matched.wav
 
-  --reference must be an isolated vocal stem (an a cappella) for now: separating the
-  vocal out of a full song arrives in milestone 4. WAV, FLAC and MP3 are read.
+  --reference can be the full song if Demucs is installed (bash install.sh
+  --with-separation, about 1 GB more); otherwise give an isolated vocal stem (an a
+  cappella). WAV, FLAC and MP3 are read. Analysis takes one to a few minutes.
   preset.json is plain text: every setting is in real units (Hz, dB, ms) and can be
   edited, then re-rendered:
 
   vocalmatch render --preset preset.json --dry my_vocal.wav --out out.wav
-  vocalmatch selftest          checks the installation (about 10 s)
+  vocalmatch selftest          checks the installation (about a minute)
   vocalmatch --help            all commands
 
 UPDATE

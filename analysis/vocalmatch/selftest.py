@@ -33,7 +33,7 @@ def run(verbose: bool = True) -> bool:
         enabled=True, threshold_db=-22, ratio=4.0, attack_ms=5, release_ms=100, knee_db=6, makeup_db=5
     )
     ref = render(truth, dry, FS)
-    est = analyze(ref, dry, FS, reference_name="selftest")
+    est = analyze(ref, dry, FS, reference_name="selftest", passes=1)
     checks: list[tuple[str, bool, str]] = []
 
     try:

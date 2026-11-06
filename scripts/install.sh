@@ -23,6 +23,8 @@
 #   --python PATH    use this Python interpreter
 #   --no-selftest    skip step 4
 #   --no-next-steps  skip step 5 (install-mac.sh prints its own)
+#   --with-separation  also install Demucs (and PyTorch, about 1 GB) so `vocalmatch analyze`
+#                    can take a full song and extract the vocal itself
 # (No `set -u`: macOS bash 3.2 treats an empty "$@" as unbound.)
 set -eo pipefail
 
@@ -31,13 +33,15 @@ ci=0
 python=""
 selftest=1
 next_steps=1
+separation=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ci) ci=1 ;;
         --python) python="$2"; shift ;;
         --no-selftest) selftest=0 ;;
         --no-next-steps) next_steps=0 ;;
-        -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        --with-separation) separation=1 ;;
+        -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 64 ;;
     esac
     shift
@@ -107,6 +111,13 @@ if ! { "$venv/bin/python" -m pip install --upgrade pip && "$venv/bin/python" -m 
     tail -5 "$pip_log" | sed 's/^/       /'
     exit 1
 fi
+if [[ $separation == 1 ]]; then
+    if "$venv/bin/python" -m pip install "demucs>=4.0" >> "$pip_log" 2>&1; then
+        ok "Demucs installed: full songs are separated before analysis"
+    else
+        warn "Demucs could not be installed (see $pip_log); give vocalmatch isolated vocal stems instead"
+    fi
+fi
 installed_version=$("$venv/bin/vocalmatch" --version)
 ok "$installed_version with $("$venv/bin/python" -c 'import numpy, scipy; print("numpy", numpy.__version__, "/ scipy", scipy.__version__)')"
 
@@ -167,8 +178,8 @@ cat <<'NEXT'
   Analyse a reference vocal against your own dry vocal (WAV, FLAC or MP3):
     vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav \
                        --out preset.json --render matched.wav
-  Until source separation lands, --reference must be an isolated vocal stem
-  (an a cappella), not a full mix.
+  --reference can be a full song when Demucs is installed (bash install.sh
+  --with-separation); otherwise give it an isolated vocal stem (an a cappella).
   Re-render with a (possibly hand-edited) preset:
     vocalmatch render --preset preset.json --dry my_vocal.wav --out out.wav
   Check the install at any time:   vocalmatch selftest

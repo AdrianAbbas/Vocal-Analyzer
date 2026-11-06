@@ -14,9 +14,9 @@ const juce::Colour accent { 0xff4fb3a9 };
 const juce::Colour estimate { 0xfff2b84b };
 } // namespace colours
 
-constexpr int kHeaderHeight = 64;
+constexpr int kHeaderHeight = 96;
 constexpr int kCardHeight = 128;
-constexpr int kEqHeight = 196;
+constexpr int kEqHeight = 160;
 constexpr int kWidth = 940;
 constexpr int kGap = 8;
 constexpr int kKnobWidth = 64;
@@ -112,7 +112,7 @@ void EffectCard::resized()
 void EffectCard::refresh()
 {
     const auto c = processor.getConfidence (effectKey);
-    confidence.setText (c ? "estimated, confidence " + juce::String (juce::roundToInt (*c * 100.0f)) + " %" : juce::String(),
+    confidence.setText (c && *c > 0.0f ? "estimated, confidence " + juce::String (juce::roundToInt (*c * 100.0f)) + " %" : juce::String(),
                         juce::dontSendNotification);
     repaint();
     for (auto* k : knobs)
@@ -151,10 +151,10 @@ void EqCard::resized()
         bands[(size_t) b].on->setBounds (top.removeFromLeft (40));
         bands[(size_t) b].type->setBounds (top.reduced (0, 1));
         col.removeFromTop (4);
-        auto upper = col.removeFromTop (col.getHeight() / 2 + 8);
-        knobs[b * 3 + 0]->setBounds (upper.removeFromLeft (upper.getWidth() / 2));
-        knobs[b * 3 + 1]->setBounds (upper);
-        knobs[b * 3 + 2]->setBounds (col.withSizeKeepingCentre (upper.getWidth(), col.getHeight()));
+        const int w = col.getWidth() / 3; // freq, gain, Q side by side
+        knobs[b * 3 + 0]->setBounds (col.removeFromLeft (w));
+        knobs[b * 3 + 1]->setBounds (col.removeFromLeft (w));
+        knobs[b * 3 + 2]->setBounds (col);
     }
 }
 } // namespace vm::ui
@@ -178,8 +178,11 @@ VocalMatchEditor::VocalMatchEditor (VocalMatchProcessor& p)
 
     namespace P = vm::params;
     using vm::ui::EffectCard;
+    // The two gain stages share the first row; then the EQ; then the chain in order.
     auto* input = cards.add (new EffectCard (p, "Input gain", "input_gain", P::inputOn));
     input->addKnob (P::inputGain, "Gain");
+    auto* output = cards.add (new EffectCard (p, "Output gain", "output_gain", P::outputOn));
+    output->addKnob (P::outputGain, "Gain");
     cards.add (new vm::ui::EqCard (p));
     auto* comp = cards.add (new EffectCard (p, "Compressor", "compressor", P::compOn));
     comp->addKnob (P::compThreshold, "Threshold");
@@ -208,8 +211,6 @@ VocalMatchEditor::VocalMatchEditor (VocalMatchProcessor& p)
     auto* doubler = cards.add (new EffectCard (p, "Doubler / width", "doubler", P::doublerOn));
     doubler->addKnob (P::doublerMix, "Mix");
     doubler->addKnob (P::doublerWidth, "Width");
-    auto* output = cards.add (new EffectCard (p, "Output gain", "output_gain", P::outputOn));
-    output->addKnob (P::outputGain, "Gain");
     for (auto* c : cards)
         addAndMakeVisible (c);
 
@@ -240,8 +241,9 @@ void VocalMatchEditor::paint (juce::Graphics& g)
 void VocalMatchEditor::resized()
 {
     auto header = juce::Rectangle<int> (0, 0, kWidth, kHeaderHeight).reduced (kGap);
-    matchKnob.setBounds (header.removeFromRight (90).withTrimmedTop (-4));
+    matchKnob.setBounds (header.removeFromRight (100));
     header.removeFromLeft (230);
+    header.removeFromTop (10);
     auto buttonRow = header.removeFromTop (28);
     loadButton.setBounds (buttonRow.removeFromLeft (140));
     status.setBounds (header.withTrimmedTop (2));

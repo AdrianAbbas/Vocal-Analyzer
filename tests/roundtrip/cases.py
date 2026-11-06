@@ -8,6 +8,7 @@ Shared by test_synthetic_roundtrip.py (asserts tolerances) and report.py
 from __future__ import annotations
 
 import functools
+from pathlib import Path
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -328,3 +329,23 @@ def run_m3_case(name: str) -> M3Result:
                        "de-esser threshold": abs(er["threshold_db"]) <= DEESS_THRESHOLD_TOL_DB,
                        "de-esser reduction": abs(er["reduction_db"]) <= DEESS_REDUCTION_TOL_DB})
     return M3Result(fx, est, errors, checks)
+
+
+# ======================================================== milestone 4: the whole chain
+FULL_CHAIN_REFINE_EVALS = 120
+
+
+def full_chain_truth() -> Preset:
+    p = Preset.load(Path(__file__).resolve().parents[2] / "shared/examples/example_preset.json")
+    p.effects.doubler = Doubler(True, 1.0, 20.0, 120.0)
+    return p
+
+
+def run_full_chain(refine_evals: int = FULL_CHAIN_REFINE_EVALS):
+    from vocalmatch.refine import Target, distance
+
+    dry = to_stereo(dry_vocal())
+    truth = full_chain_truth()
+    ref = render(truth, dry, FS)
+    est = analyze(ref, dry, FS, reference_name="synthetic:full chain", refine_evals=refine_evals)
+    return truth, est, compare_eq(truth.effects.eq, est.effects.eq), est.diagnostics.get("refinement", {})
