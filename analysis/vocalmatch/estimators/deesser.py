@@ -133,16 +133,16 @@ class _Simulator:
         return self.split[key]
 
     def min_threshold(self, freq: float) -> float:
-        """The lowest threshold allowed at this crossover: the median 10 ms high-band peak level
-        over active frames. Lower, the de-esser would act most of the time: a static high cut,
-        which is the EQ's job (and would let the two trade off)."""
+        """The lowest threshold allowed at this crossover: the 20th percentile of the 10 ms
+        high-band peak level over active frames. Lower, the de-esser would act nearly all the
+        time: a static high cut, which is the EQ's job (and would let the two trade off)."""
         det = self.bands_for(freq)[0]
         k = len(det) // self.n
         peaks = to_db(det[: k * self.n].reshape(k, self.n).max(axis=1))
         lm = self.bands_for(freq)[1]
         lv = power_db(_frame_energy(lm, self.n))[:k]
         active = lv > np.percentile(lv, 95) - ACTIVE_REL_DB
-        return float(np.median(peaks[active])) if active.any() else BOUNDS["threshold_db"][0]
+        return float(np.percentile(peaks[active], 20)) if active.any() else BOUNDS["threshold_db"][0]
 
     def features(self, freq: float, threshold: float, reduction: float, decimation: int = 1) -> np.ndarray:
         det, lm, hm, fb, fh = self.bands_for(freq)
