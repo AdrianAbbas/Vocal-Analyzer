@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stage <dist>/VocalMatch-Analyzer.zip: the vocalmatch wheel, install.sh, uninstall.sh and
-# INSTALL.txt. (The plug-in bundles join this package in milestone 5.)
+# INSTALL.txt: the analyzer alone (Linux). macOS: scripts/package-mac.sh adds the plug-in.
 # Usage: scripts/package.sh <dist dir>
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

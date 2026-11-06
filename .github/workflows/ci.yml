@@ -1,7 +1,8 @@
 name: CI
-# Same pipeline shape as AdrianAbbas/LIMINAL's "Native build": test, package, install the
-# package the way a user does (quarantined download on macOS), and only then publish the
-# installable zip. Tags v* also publish it as a GitHub Release (a stable download link).
+# Same pipeline shape as AdrianAbbas/LIMINAL's "Native build" (TAPEWORN FX): test, build the
+# universal plug-in, package it with the analyzer, install the package the way a user does
+# (quarantined download on macOS), validate it like a host (auval, pluginval), and only then
+# publish the installable zip. Tags v* also publish it as a GitHub Release.
 # Commits whose message contains [skip ci] do not run.
 on:
   push:
@@ -12,6 +13,9 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+env:
+  JUCE_COMMIT: ea77444750de45e036e0279bb0291144bf8e3688 # JUCE 8.0.16, as in plugin/CMakeLists.txt
+  PLUGINVAL_VERSION: v1.0.4
 
 jobs:
   python:
@@ -24,7 +28,7 @@ jobs:
         include:
           - {os: ubuntu-latest, python: "3.10"}
           - {os: ubuntu-latest, python: "3.13"}
-          - {os: macos-latest, python: "3.12"}
+          - {os: macos-15, python: "3.12"}
           - {os: windows-latest, python: "3.12"}
     steps:
       - uses: actions/checkout@v4
@@ -33,72 +37,187 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install
         run: python -m pip install -e "analysis[dev]"
+      # The Python-vs-C++ check is skipped here (no plug-in build); the plug-in jobs run it.
       - name: Unit + synthetic round-trip tests
         run: python -m pytest
 
+  plugin-linux:
+    # The fast loop for the C++ chain: build VocalMatchRender (the plug-in's processor,
+    # offline) and the VST3, then the Python-vs-C++ check against the reference chain.
+    name: Plug-in build + Python vs C++ check (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libgl1-mesa-dev
+      - name: JUCE source cache
+        id: juce
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/juce
+          key: juce-${{ env.JUCE_COMMIT }}
+      - name: Fetch JUCE 8.0.16
+        if: steps.juce.outputs.cache-hit != 'true'
+        run: bash scripts/ci-fetch-juce.sh "${{ runner.temp }}/juce" "$JUCE_COMMIT"
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: linux
+          max-size: 500M
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure
+        run: >
+          cmake -S plugin -B plugin/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ runner.temp }}/juce"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build (VST3 and VocalMatchRender)
+        run: cmake --build plugin/build --parallel 4
+      - name: Python vs C++ check (the plug-in processor against the Python reference chain)
+        env:
+          VOCALMATCH_REQUIRE_CPP: "1"
+        run: |
+          python -m pip install -e "analysis[dev]"
+          python -m pytest tests/parity -v -s
+
+  plugin-macos:
+    # The user's package: universal AU + VST3 and the analyzer, installed from a quarantined
+    # download with install-mac.sh, then auval (arm64 and x86_64) and pluginval.
+    name: Plug-in package + user install test (macOS)
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain and Rosetta
+        run: |
+          sw_vers
+          xcodebuild -version
+          cmake --version
+          /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+      - name: JUCE source cache
+        id: juce
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/juce
+          key: juce-${{ env.JUCE_COMMIT }}
+      - name: Fetch JUCE 8.0.16
+        if: steps.juce.outputs.cache-hit != 'true'
+        run: bash scripts/ci-fetch-juce.sh "${{ runner.temp }}/juce" "$JUCE_COMMIT"
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos-universal
+          max-size: 1G
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure (universal arm64 + x86_64, macOS 10.15+)
+        run: >
+          cmake -S plugin -B plugin/build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+          -DJUCE_PATH="${{ runner.temp }}/juce"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build (AU, VST3 and VocalMatchRender)
+        run: |
+          cmake --build plugin/build --parallel 4
+          ccache --show-stats
+      - name: Python vs C++ check (arm64)
+        env:
+          VOCALMATCH_REQUIRE_CPP: "1"
+        run: |
+          python -m pip install -e "analysis[dev]"
+          python -m pytest tests/parity -v -s
+      - name: Universal binary and Info.plist gate
+        run: bash scripts/ci-check-bundles.sh plugin/build/VocalMatch_artefacts/Release
+      - name: Sign, verify and package (plug-in + analyzer)
+        run: bash scripts/package-mac.sh plugin/build/VocalMatch_artefacts/Release dist
+      - name: Fetch pluginval
+        run: bash scripts/ci-fetch-pluginval.sh "$PLUGINVAL_VERSION" "${{ runner.temp }}/pluginval"
+      # One script, the user's whole path: quarantined download, install-mac.sh (plug-in + analyzer),
+      # auval arm64 + x86_64, pluginval strictness 5 on the installed AU and VST3, the analyzer's
+      # preset rendered by the plug-in's processor, uninstall-mac.sh.
+      - name: Install a quarantined download with install-mac.sh, then auval, pluginval and the analyzer
+        run: >
+          bash scripts/ci-user-install-test-mac.sh dist/VocalMatch-macOS-Universal.zip build/ci-logs
+          plugin/build/VocalMatchRender_artefacts/Release/VocalMatchRender
+          "${{ runner.temp }}/pluginval/pluginval.app/Contents/MacOS/pluginval"
+      - name: Upload installable package (only when every check passed)
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalMatch-macOS-Universal
+          path: dist/VocalMatch-macOS-Universal.zip
+          if-no-files-found: error
+      - name: Install link in the run summary
+        run: |
+          {
+            echo "## Install Vocal Match (macOS: plug-in + analyzer)"
+            echo ""
+            echo "**[Download VocalMatch-macOS-Universal](${{ steps.upload.outputs.artifact-url }})** (sign in to GitHub), unzip it, quit GarageBand, then in Terminal:"
+            echo ""
+            echo '```bash'
+            echo 'bash install-mac.sh'
+            echo '```'
+            echo ""
+            echo "GarageBand: Smart Controls (B) > Plug-ins > an empty slot > Audio Units > Windward Audio > Vocal Match, then **Load preset...**"
+            echo ""
+            echo "Tested on this run: quarantined download -> \`install-mac.sh\` -> auval arm64 + x86_64 -> pluginval -> analyzer self-test -> analyzer preset in the plug-in -> \`uninstall-mac.sh\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VocalMatch-macOS-diagnostics
+          path: |
+            build/ci-logs/
+            dist/wheel-build-mac.txt
+          if-no-files-found: warn
+
   package:
-    # Runs only when every test job passed.
-    name: Package + user install test (${{ matrix.os }})
+    # The analyzer alone for Linux (macOS users get it inside VocalMatch-macOS-Universal).
+    name: Analyzer package + user install test (Linux)
     needs: python
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Shell scripts lint
-        if: runner.os == 'Linux'
         run: shellcheck scripts/*.sh
       - name: Build the package (wheel + install.sh + uninstall.sh + INSTALL.txt)
         run: bash scripts/package.sh dist
       - name: Install the downloaded package with install.sh, use it, uninstall it
         run: bash scripts/ci-user-install-test.sh dist/VocalMatch-Analyzer.zip build/ci-logs
-      # One installable zip (the analyzer is pure Python: the same package serves macOS and
-      # Linux). Uploaded from the macOS job, only after its install test passed.
       - name: Upload installable package
-        id: upload
-        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: VocalMatch-Analyzer
           path: dist/VocalMatch-Analyzer.zip
           if-no-files-found: error
-      - name: Install link in the run summary
-        if: runner.os == 'macOS'
-        run: |
-          {
-            echo "## Install Vocal Match analyzer"
-            echo ""
-            echo "**[Download VocalMatch-Analyzer](${{ steps.upload.outputs.artifact-url }})** (sign in to GitHub), unzip it, then in Terminal:"
-            echo ""
-            echo '```bash'
-            echo 'bash install.sh'
-            echo '```'
-            echo ""
-            echo "Tested on this run: quarantined download -> \`install.sh\` -> \`vocalmatch selftest\` -> analyze/render -> \`uninstall.sh\` (macOS and Linux)."
-            echo "See INSTALL.txt in the zip for details."
-          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: VocalMatch-install-logs-${{ runner.os }}
+          name: VocalMatch-install-logs-Linux
           path: |
             build/ci-logs/
             dist/wheel-build.txt
           if-no-files-found: warn
 
   release:
-    # Tagged commits (v*) publish the same package as a GitHub Release: no sign-in needed, and
-    # https://github.com/AdrianAbbas/vocal-analyzer/releases/latest/download/VocalMatch-Analyzer.zip
-    # always points at the newest one.
+    # Tagged commits (v*) publish both packages as a GitHub Release (no sign-in needed):
+    # .../releases/latest/download/VocalMatch-macOS-Universal.zip and .../VocalMatch-Analyzer.zip
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [package, plugin-macos, plugin-linux]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,9 +225,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: VocalMatch-Analyzer
+      - uses: actions/download-artifact@v4
+        with:
+          name: VocalMatch-macOS-Universal
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" VocalMatch-Analyzer.zip --repo "$GITHUB_REPOSITORY" --title "Vocal Match $GITHUB_REF_NAME" --generate-notes
-  # Plugin build (macOS universal AU/VST3 + Windows VST3) and pluginval join in milestone 5;
-  # the plug-in bundles will then ship in the same zip, installed by the same install.sh.
+        run: gh release create "$GITHUB_REF_NAME" VocalMatch-macOS-Universal.zip VocalMatch-Analyzer.zip --repo "$GITHUB_REPOSITORY" --title "Vocal Match $GITHUB_REF_NAME" --generate-notes

@@ -1,0 +1,69 @@
+VOCAL MATCH by Windward Audio - your vocal, processed like the reference
+(Audio Unit and VST3 effect, macOS 10.15+, Apple Silicon and Intel, plus the analyzer)
+
+This folder holds the two halves of Vocal Match:
+  Vocal Match.component / Vocal Match.vst3   the plug-in: input gain, EQ, compressor,
+                                             output gain, every setting automatable
+  vocalmatch-*.whl                           the analyzer (the `vocalmatch` command): it
+                                             listens to a reference vocal and your dry
+                                             vocal and writes preset.json for the plug-in
+
+NEEDS
+  Python 3.10 or newer for the analyzer (macOS's built-in python3 is 3.9, too old). If
+  the installer says none was found: install Python from https://www.python.org/downloads/
+  or run "brew install python@3.12", then run the installer again.
+  Internet access during install (numpy, scipy and friends come from PyPI).
+
+INSTALL
+  1. Quit GarageBand and Logic.
+  2. Open Terminal (Applications > Utilities > Terminal).
+  3. Type "bash " (with a space), drag install-mac.sh from this folder into the
+     Terminal window, and press Return.
+  4. Answer Y if it offers to add ~/.local/bin to your PATH.
+  5. Wait for "Vocal Match is installed and validated."
+
+  Why a script? This build is not signed with an Apple Developer ID. When a browser
+  downloads it, macOS marks every file as quarantined and then refuses to load the
+  plug-in: GarageBand shows a silent slot with plain sliders. The script removes that
+  flag, re-signs the plug-in for this Mac, refreshes the Audio Unit list, runs Apple's
+  validator (auval), then installs the analyzer and runs its self-test.
+
+  The plug-in goes to ~/Library/Audio/Plug-Ins/Components and .../VST3, the analyzer
+  to ~/Library/Application Support/VocalMatch (linked as ~/.local/bin/vocalmatch).
+  Nothing is installed system-wide and no password is asked for.
+
+MAKE A PRESET
+  vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav --out preset.json
+  --reference must be an isolated vocal stem (an a cappella) for now: separating the
+  vocal out of a full song arrives in a later version. WAV, FLAC and MP3 are read.
+
+GARAGEBAND
+  Settings > Audio/MIDI: tick "Audio Units". Restart GarageBand.
+  Select your vocal track. Smart Controls (B) > Plug-ins > an empty slot >
+  Audio Units > Windward Audio > Vocal Match.
+  Click "Load preset..." and choose preset.json (or drop it on the window).
+  If you see sliders instead of the Vocal Match window, switch the plug-in
+  window's view menu from "Controls" to "Editor".
+
+LOGIC PRO
+  Settings > Plug-in Manager > Windward Audio > Vocal Match. If it is marked failed,
+  select it and click "Reset & Rescan Selection". Then any Audio FX slot:
+  Audio Units > Windward Audio > Vocal Match.
+
+THE WINDOW
+  LOAD PRESET    reads the analyzer's preset.json; every knob moves to its estimate
+                 and an orange dot keeps marking the estimate while you edit.
+  MATCH AMOUNT   0-100 %: scales every effect's departure from neutral
+                 (0 % = your dry vocal, 100 % = the full estimate).
+  ON             each effect's bypass switch.
+  Every setting is a normal automatable parameter and is saved with the song.
+
+UPDATE
+  Download the newer package and run its install-mac.sh: it replaces the old copies.
+
+UNINSTALL
+  bash uninstall-mac.sh        (add --purge to also delete the logs)
+
+IF IT DOES NOT SHOW UP
+  The logs are in ~/Library/Logs/VocalMatch. Re-run install-mac.sh; if GarageBand
+  still shows a silent slot, run "bash install-mac.sh --out-of-process".

@@ -45,7 +45,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
 
     preset = Preset.load(args.preset)
     dry, fs = load_audio(args.dry)
-    write_audio(args.out, render(preset, dry, fs, tail_s=args.tail), fs)
+    write_audio(args.out, render(preset, dry, fs, tail_s=args.tail, match_amount=args.match / 100.0), fs)
     print(f"wrote {args.out}")
     return 0
 
@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--dry", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--tail", type=float, default=0.0)
+    r.add_argument("--match", type=float, default=100.0, help="the plug-in's Match amount, 0-100 %% (default 100)")
     r.set_defaults(func=_cmd_render)
 
     s = sub.add_parser("synth", help="write the synthetic test vocal")

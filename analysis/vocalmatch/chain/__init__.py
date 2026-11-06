@@ -7,6 +7,8 @@ Input gain -> EQ -> Compressor -> Saturation -> De-esser -> Delay -> Reverb
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 
 from ..preset import Preset
@@ -20,7 +22,7 @@ from .effects import (
     process_saturation,
 )
 
-__all__ = ["render", "to_stereo", "process_chain"]
+__all__ = ["render", "to_stereo", "process_chain", "apply_match_amount"]
 
 
 def to_stereo(audio: np.ndarray) -> np.ndarray:
@@ -39,6 +41,27 @@ def to_stereo(audio: np.ndarray) -> np.ndarray:
     if chans.shape[0] == 1:
         chans = np.vstack([chans[0], chans[0]])
     return np.ascontiguousarray(chans)
+
+
+def apply_match_amount(preset: Preset, amount: float) -> Preset:
+    """The plug-in's "Match amount" knob (shared/CHAIN.md): scale every effect's departure
+    from neutral by *amount* (0..1). Returns a copy; 1 leaves the preset unchanged."""
+    m = min(max(float(amount), 0.0), 1.0)
+    p = copy.deepcopy(preset)
+    e = p.effects
+    e.input_gain.gain_db *= m
+    for band in e.eq.bands:
+        band.gain_db *= m
+    e.compressor.ratio = 1.0 + (max(e.compressor.ratio, 1.0) - 1.0) * m
+    e.compressor.makeup_db *= m
+    e.saturation.mix_pct *= m
+    e.deesser.reduction_db *= m
+    e.delay.mix_pct *= m
+    e.reverb.mix_pct *= m
+    e.doubler.mix_pct *= m
+    e.doubler.width_pct = 100.0 + (e.doubler.width_pct - 100.0) * m
+    e.output_gain.gain_db *= m
+    return p
 
 
 def process_chain(x: np.ndarray, fs: float, preset: Preset) -> np.ndarray:
@@ -66,11 +89,16 @@ def process_chain(x: np.ndarray, fs: float, preset: Preset) -> np.ndarray:
     return y
 
 
-def render(preset: Preset, audio: np.ndarray, fs: float, tail_s: float = 0.0) -> np.ndarray:
+def render(
+    preset: Preset, audio: np.ndarray, fs: float, tail_s: float = 0.0, match_amount: float = 1.0
+) -> np.ndarray:
     """Render *audio* through the chain; returns (n [+ tail], 2) like soundfile.
 
     *tail_s* appends silence before processing so delay/reverb tails ring out.
+    *match_amount* (0..1) is the plug-in's Match amount knob.
     """
+    if match_amount != 1.0:
+        preset = apply_match_amount(preset, match_amount)
     x = to_stereo(audio)
     if tail_s > 0:
         x = np.hstack([x, np.zeros((2, int(round(tail_s * fs))))])

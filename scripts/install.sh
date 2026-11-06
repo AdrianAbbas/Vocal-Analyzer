@@ -22,6 +22,7 @@
 #   --ci             non-interactive: no prompts, do not edit shell profiles
 #   --python PATH    use this Python interpreter
 #   --no-selftest    skip step 4
+#   --no-next-steps  skip step 5 (install-mac.sh prints its own)
 # (No `set -u`: macOS bash 3.2 treats an empty "$@" as unbound.)
 set -eo pipefail
 
@@ -29,12 +30,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ci=0
 python=""
 selftest=1
+next_steps=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ci) ci=1 ;;
         --python) python="$2"; shift ;;
         --no-selftest) selftest=0 ;;
-        -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        --no-next-steps) next_steps=0 ;;
+        -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 64 ;;
     esac
     shift
@@ -158,6 +161,7 @@ if [[ $selftest == 1 ]]; then
 fi
 
 # ----------------------------------------------------------- 5. next steps
+if [[ $next_steps == 1 ]]; then
 bold "5. Next steps"
 cat <<'NEXT'
   Analyse a reference vocal against your own dry vocal (WAV, FLAC or MP3):
@@ -170,6 +174,7 @@ cat <<'NEXT'
   Check the install at any time:   vocalmatch selftest
   Remove it:                       bash uninstall.sh
 NEXT
+fi
 if [[ $result == 0 ]]; then
     bold "Vocal Match analyzer is installed and passed its self-test."
 else

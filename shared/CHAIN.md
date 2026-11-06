@@ -1,9 +1,11 @@
 # Vocal Match effect chain — DSP reference
 
 This is the contract between the Python reference chain
-(`analysis/vocalmatch/chain/`) and the JUCE plugin (`plugin/`, milestone 5).
+(`analysis/vocalmatch/chain/`) and the JUCE plugin (`plugin/Source/DSP/`).
 Both must implement exactly this so that, fed the same preset and input, they
-agree within -40 dB of residual (SPEC "Python vs C++ check").
+agree within -40 dB of residual (SPEC "Python vs C++ check",
+`tests/parity/test_cpp_match.py`, which runs the plug-in's own processor).
+Both run in double precision.
 
 Conventions: processing is stereo `(L, R)`; a mono input is copied to both
 channels. All state starts at zero on reset. `fs` is the sample rate.
@@ -84,3 +86,18 @@ soft-clips at ±1/g), `y = (1 − m)·x + m·wet` with `m = mix_pct/100`.
   rate 0.23 Hz. LFO phase is 0 at reset.
 - `y_c = x_c + m·v_c`, `m = mix_pct/100`.
 - Width: `M = (L+R)/2`, `S = (L−R)/2 · width_pct/100`, `L = M+S`, `R = M−S`.
+
+## Match amount (plug-in knob, `render(..., match_amount=)`)
+`m` in `[0, 1]` scales every effect's departure from neutral before processing:
+gains (`input_gain`, `output_gain`, every EQ band `gain_db`, compressor
+`makeup_db`) are multiplied by `m`; compressor `ratio → 1 + (ratio − 1)·m`;
+`mix_pct` of saturation, delay, reverb and doubler and the de-esser's
+`reduction_db` are multiplied by `m`; doubler `width_pct → 100 + (width_pct − 100)·m`.
+Frequencies, Q, threshold, knee, times, feedback and decay are unchanged.
+`m = 0` is neutral (the dry signal, apart from compressor ballistics of a
+1:1 ratio, which are an exact identity). `apply_match_amount` in
+`chain/__init__.py` and `applyMatchAmount` in `plugin/Source/DSP/Chain.h`.
+
+## Plug-in I/O
+Mono → mono, mono → stereo and stereo → stereo. A mono input feeds both
+channels; a mono output is `(L + R)/2`. Latency is 0.

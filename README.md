@@ -5,7 +5,7 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 
 ```
 /analysis   Python prototype: analysis + parameter estimation + reference chain
-/plugin     JUCE plugin (milestone 5)
+/plugin     JUCE plug-in: AU + VST3 effect, loads preset.json (see plugin/README.md)
 /shared     preset schema (JSON) + exact DSP definition of the chain (CHAIN.md)
 /tests      synthetic round-trip tests, test audio (private/ is git-ignored)
 ```
@@ -16,17 +16,35 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 |---|---|
 | 1. Scaffold, preset schema, Python reference chain + render | done |
 | 2. EQ + compression estimators, synthetic round-trip tests | done |
+| 5 (early). JUCE plug-in shell: AU + VST3, the chain so far, Load preset, Match amount, Python vs C++ check | done |
 | 3. Reverb, delay, saturation, de-esser, width estimators | – |
 | 4. Demucs separation, refinement optimizer, listening tests | – |
-| 5–7. JUCE plugin, in-plugin Analyze, ONNX | – |
+| 6–7. In-plugin Analyze, ONNX | – |
+
+The plug-in was moved ahead of milestones 3–4 so it can be tried in GarageBand early;
+each later effect is added to the Python chain and the plug-in together.
 
 Until milestone 4, `--reference` must already be an **isolated vocal stem**:
 no source separation runs yet.
 
-## Install (macOS, Linux)
+## Install on macOS (plug-in + analyzer)
 
-Download **`VocalMatch-Analyzer`** from the latest successful [CI run](https://github.com/AdrianAbbas/vocal-analyzer/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess).
-The run's summary page has the direct link. Unzip it, then follow `INSTALL.txt`:
+Download **`VocalMatch-macOS-Universal`** from the latest successful [CI run](https://github.com/AdrianAbbas/vocal-analyzer/actions/workflows/ci.yml?query=is%3Asuccess).
+The run's summary page has the direct link. Quit GarageBand, unzip it, then follow `INSTALL.txt`:
+
+```bash
+bash install-mac.sh
+```
+
+The installer copies `Vocal Match.component` to `~/Library/Audio/Plug-Ins/Components` and
+`Vocal Match.vst3` to `~/Library/Audio/Plug-Ins/VST3`, removes the browser's quarantine flag,
+signs both ad hoc, resets the Audio Unit registry, runs `auval`, then installs the analyzer
+(below). In GarageBand: Smart Controls (B) > Plug-ins > an empty slot > Audio Units >
+Windward Audio > Vocal Match, then **Load preset...**.
+
+## Install the analyzer alone (Linux, or macOS without the plug-in)
+
+Download **`VocalMatch-Analyzer`** from the same CI run, unzip it, then:
 
 ```bash
 bash install.sh
@@ -37,10 +55,11 @@ The installer:
 - installs the `vocalmatch` command into a private environment and links it into `~/.local/bin`;
 - runs `vocalmatch selftest` and prints PASS or FAIL.
 
-CI runs exactly this on every push before it publishes the zip: a quarantined download is unzipped, installed, used and uninstalled, on macOS and Linux.
+CI runs exactly this on every push before it publishes the zips: on macOS a quarantined download is installed with `install-mac.sh`,
+validated with `auval` (arm64 and x86_64 under Rosetta) and pluginval (strictness 5), the analyzer's preset is rendered by the plug-in, and everything is uninstalled; on Linux the analyzer package is installed, used and uninstalled.
 Tagged versions (`v*`) are also published as a GitHub Release, which needs no GitHub sign-in:
-`https://github.com/AdrianAbbas/vocal-analyzer/releases/latest/download/VocalMatch-Analyzer.zip`.
-The AU/VST3 plug-in joins the same package in milestone 5.
+`https://github.com/AdrianAbbas/vocal-analyzer/releases/latest/download/VocalMatch-macOS-Universal.zip`
+(and `VocalMatch-Analyzer.zip`).
 
 ## Develop
 
@@ -53,7 +72,7 @@ python -m vocalmatch analyze --reference ref_vocal.wav --dry myvocal.wav --out p
 ```
 
 ```bash
-python -m vocalmatch render --preset preset.json --dry myvocal.wav --out out.wav --tail 2
+python -m vocalmatch render --preset preset.json --dry myvocal.wav --out out.wav --tail 2 --match 100
 ```
 
 ```bash
@@ -70,7 +89,8 @@ python -m pytest
 python tests/roundtrip/report.py --unpaired
 ```
 
-The first command runs the unit tests and the synthetic round-trip tests.
+The first command runs the unit tests, the synthetic round-trip tests, and the Python-vs-C++
+check (`tests/parity`, skipped unless the plug-in's `VocalMatchRender` is built: see `plugin/README.md`).
 The second prints a Markdown table of the round-trip results.
 
 The round trip renders a deterministic synthetic vocal through known settings,

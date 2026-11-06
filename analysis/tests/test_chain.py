@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 from scipy.signal import butter, sosfilt, sosfreqz
@@ -214,3 +216,19 @@ def test_width_zero_is_mono_and_mix_adds_voices():
     np.testing.assert_allclose(mono[0], mono[1])
     wide = process_doubler(x, FS, Doubler(enabled=True, mix_pct=50, width_pct=100))
     assert np.corrcoef(wide[0], wide[1])[0, 1] < 0.9
+
+
+# ------------------------------------------------------------- match amount
+def test_match_amount_scales_departure_from_neutral():
+    from vocalmatch.chain import apply_match_amount
+
+    p = Preset.load(Path(__file__).resolve().parents[2] / "shared/examples/example_preset.json")
+    half = apply_match_amount(p, 0.5)
+    assert half.effects.compressor.ratio == pytest.approx(1.0 + (p.effects.compressor.ratio - 1.0) / 2)
+    assert half.effects.compressor.threshold_db == p.effects.compressor.threshold_db
+    assert [b.gain_db for b in half.effects.eq.bands] == pytest.approx([b.gain_db / 2 for b in p.effects.eq.bands])
+    assert half.effects.reverb.mix_pct == pytest.approx(p.effects.reverb.mix_pct / 2)
+    assert p.effects.compressor.ratio == 4.0  # the input preset is not modified
+    x = noise()
+    np.testing.assert_allclose(render(p, x, FS, match_amount=0.0)[:, 0], x, atol=1e-12)
+    np.testing.assert_array_equal(render(p, x, FS, match_amount=1.0), render(p, x, FS))

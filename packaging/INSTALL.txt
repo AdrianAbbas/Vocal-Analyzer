@@ -2,8 +2,8 @@ VOCAL MATCH - analyzer (command-line), macOS and Linux
 
 This package installs the `vocalmatch` command: it analyses the lead vocal of a
 reference and writes a preset (EQ + compressor so far) for your own vocal, and can
-render your dry vocal through it. The AU / VST3 plug-in is not built yet (milestone 5);
-when it is, it will ship in this same package.
+render your dry vocal through it. On a Mac, download VocalMatch-macOS-Universal instead:
+it holds the AU / VST3 plug-in and this analyzer, installed together by install-mac.sh.
 
 NEEDS
   Python 3.10 or newer (macOS's built-in python3 is 3.9, too old). If the installer
