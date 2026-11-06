@@ -45,6 +45,9 @@ THRESHOLDS_DB = np.arange(-54.0, -2.0, 4.0)
 REDUCTIONS_DB = np.array([3.0, 6.0, 9.0, 12.0, 16.0, 20.0, 24.0])
 MIN_IMPROVEMENT_DB = 0.25
 MIN_IMPROVEMENT_REL = 0.25
+# Detection threshold: below it the fit is more likely explaining small errors of the EQ and
+# compressor estimates than a de-esser (milestone 4's joint refinement revisits this).
+MIN_CONFIDENCE = 0.35
 BOUNDS = {"frequency_hz": (2000.0, 16000.0), "threshold_db": (-60.0, 0.0), "reduction_db": (0.0, 24.0)}
 
 
@@ -129,6 +132,18 @@ class _Simulator:
             self.split = {key: (det, lm, hm, fb, fh)}  # keep one crossover
         return self.split[key]
 
+    def min_threshold(self, freq: float) -> float:
+        """The lowest threshold allowed at this crossover: the median 10 ms high-band peak level
+        over active frames. Lower, the de-esser would act most of the time: a static high cut,
+        which is the EQ's job (and would let the two trade off)."""
+        det = self.bands_for(freq)[0]
+        k = len(det) // self.n
+        peaks = to_db(det[: k * self.n].reshape(k, self.n).max(axis=1))
+        lm = self.bands_for(freq)[1]
+        lv = power_db(_frame_energy(lm, self.n))[:k]
+        active = lv > np.percentile(lv, 95) - ACTIVE_REL_DB
+        return float(np.median(peaks[active])) if active.any() else BOUNDS["threshold_db"][0]
+
     def features(self, freq: float, threshold: float, reduction: float, decimation: int = 1) -> np.ndarray:
         det, lm, hm, fb, fh = self.bands_for(freq)
         fs = self.fs / decimation
@@ -168,7 +183,8 @@ def estimate_deesser(reference: np.ndarray, pre: np.ndarray, fs: float, decimati
 
     best = (none_err, FREQS_HZ[0], 0.0, 0.0)
     for f in FREQS_HZ:
-        for t in THRESHOLDS_DB:
+        t_min = sim.min_threshold(f)
+        for t in THRESHOLDS_DB[THRESHOLDS_DB >= t_min]:
             for r in REDUCTIONS_DB:
                 e = err(f, t, r, decimation)
                 if e < best[0]:
@@ -179,7 +195,7 @@ def estimate_deesser(reference: np.ndarray, pre: np.ndarray, fs: float, decimati
 
     def objective(zz):
         f = float(np.clip(2.0 ** zz[0], *BOUNDS["frequency_hz"]))
-        t = float(np.clip(zz[1], *BOUNDS["threshold_db"]))
+        t = float(np.clip(zz[1], max(BOUNDS["threshold_db"][0], sim.min_threshold(f)), BOUNDS["threshold_db"][1]))
         r = float(np.clip(zz[2], *BOUNDS["reduction_db"]))
         return err(f, t, r, 1)
 
@@ -191,13 +207,14 @@ def estimate_deesser(reference: np.ndarray, pre: np.ndarray, fs: float, decimati
     zz = res.x if res.fun <= e_full0 else z0
     e_fin = min(res.fun, e_full0)
     f = float(np.clip(2.0 ** zz[0], *BOUNDS["frequency_hz"]))
-    t = float(np.clip(zz[1], *BOUNDS["threshold_db"]))
+    t = float(np.clip(zz[1], max(BOUNDS["threshold_db"][0], sim.min_threshold(f)), BOUNDS["threshold_db"][1]))
     r = float(np.clip(zz[2], *BOUNDS["reduction_db"]))
     # The post-effect kernel is an approximation (~0.5 dB residual), so a de-esser must earn
     # its place: a clear improvement over none, absolute and relative.
-    enabled = r >= 0.5 and none_err - e_fin >= MIN_IMPROVEMENT_DB and e_fin <= (1.0 - MIN_IMPROVEMENT_REL) * none_err
     explained = 1.0 - e_fin / max(none_err, 1e-9)
     confidence = float(np.clip(explained, 0.0, 1.0) * np.exp(-e_fin / 1.0))
+    enabled = bool(r >= 0.5 and none_err - e_fin >= MIN_IMPROVEMENT_DB and e_fin <= (1.0 - MIN_IMPROVEMENT_REL) * none_err
+                   and confidence >= MIN_CONFIDENCE)
     d = DeEsser(enabled=enabled, confidence=round(confidence, 3), frequency_hz=round(f, 1), threshold_db=round(t, 2),
                 reduction_db=round(r, 2) if enabled else 0.0)
     if not enabled:

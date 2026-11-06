@@ -30,6 +30,7 @@ GROUPS = ((0.0, 0.05), (0.05, 0.15), (0.15, 0.35), (0.35, 0.60))  # level-rank f
 ACTIVE_REL_DB = 30.0
 DRIVES_DB = np.arange(0.0, 36.0 + 1e-9, 3.0)
 MIXES = np.linspace(0.0, 1.0, 21)
+MIN_CONFIDENCE = 0.35
 LOW_BAND, HIGH_BAND = (200.0, 2000.0), (4000.0, 12000.0)
 
 
@@ -133,9 +134,14 @@ def estimate_saturation(reference: np.ndarray, pre: np.ndarray, fs: float, post=
             best = (float(e[k]), float(d), float(fine_mixes[k]))
     err, drive, mix = best
     mix_pct = mix * 100.0
-    enabled = mix_pct >= 1.0
     explained = 1.0 - err / max(none_err, 1e-9)
-    confidence = float(np.clip(explained, 0.0, 1.0) * np.exp(-err / 1.0)) if enabled else float(np.exp(-err / 1.0))
+    confidence = float(np.clip(explained, 0.0, 1.0) * np.exp(-err / 1.0))
+    # Detection threshold: mild saturation moves these features less than small errors of the
+    # compressor estimate do (attack time changes the crest factor too), so a weak fit is
+    # treated as no saturation (milestone 4's joint refinement revisits this).
+    enabled = mix_pct >= 1.0 and confidence >= MIN_CONFIDENCE
+    if not enabled:
+        confidence = float(np.exp(-none_err / 1.0))
     sat = Saturation(enabled=enabled, confidence=round(confidence, 3), drive_db=round(drive, 2) if enabled else 0.0,
                      mix_pct=round(mix_pct, 1) if enabled else 0.0)
     return SaturationEstimate(sat, {"detected": enabled, "fit_error": round(err, 3), "fit_error_without": round(none_err, 3)})
