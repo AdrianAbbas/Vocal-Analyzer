@@ -160,6 +160,41 @@ class _Simulator:
         return stats_distance(s, ref, m), m
 
 
+class _PostSimulator(_Simulator):
+    """With effects after the compressor (milestone 3): the reference's statistics include
+    the reverb's and delay's tails, so the simulation must too. To keep each evaluation
+    cheap, the whole path runs at fs / decimation: the gain comes from the block-max
+    detector (as in _Simulator), is applied to the signal resampled to fs / decimation, then
+    the post effects run at that rate and the statistics are taken there (the reference's
+    as well, see estimate_compressor). *post(v, fs)* must be linear in v, so make-up still
+    only shifts the level statistics; a saturation after the compressor (level dependent)
+    is applied with the make-up *makeup_hint* folded in."""
+
+    def __init__(self, dry, fs, decimation, knee_db, post, saturation=None, makeup_hint=0.0):
+        super().__init__(dry, fs, decimation, knee_db)
+        from scipy.signal import resample_poly
+
+        nb = len(self.det)
+        self.xd = resample_poly(self.x, 1, decimation, axis=1)[:, :nb]
+        self.fs_d = fs / decimation
+        self.post = post
+        self.saturation = saturation
+        self.makeup_hint = makeup_hint
+
+    def stats(self, t, r, a, rel) -> dict:
+        key = (round(t, 4), round(r, 4), round(a, 4), round(rel, 4))
+        if key not in self.cache:
+            g = compressor_gain_db(self.det, self.fs_d, self.params(t, r, a, rel))
+            y = self.xd * 10.0 ** (g / 20.0)
+            if self.saturation is not None and self.saturation.enabled:
+                from ..chain.effects import process_saturation
+
+                k = 10.0 ** (self.makeup_hint / 20.0)
+                y = process_saturation(y * k, self.saturation) / k
+            self.cache[key] = envelope_stats(self.post(y, self.fs_d), self.fs_d)
+        return self.cache[key]
+
+
 def _to_params(z):
     t = float(np.clip(z[0], *BOUNDS["threshold_db"]))
     r = float(np.clip(2.0 ** z[1], *BOUNDS["ratio"]))
@@ -178,10 +213,24 @@ def estimate_compressor(
     max_starts: int = 3,
     good_enough_db: float = 0.06,
     polish_evals: int = 60,
+    post=None,
+    saturation=None,
+    makeup_hint: float = 0.0,
 ) -> CompressorEstimate:
-    ref = envelope_stats(to_stereo(reference), fs)
-    sim = _Simulator(dry, fs, decimation, knee_db)
-    dry_stats = envelope_stats(sim.x, fs)
+    """*post(v, fs)*: optional linear function, the (estimated) effects after the compressor
+    (de-esser excluded: it barely moves the envelope); *saturation*: an estimated saturation
+    between them. With *post* the search runs at fs / decimation throughout."""
+    if post is not None:
+        from scipy.signal import resample_poly
+
+        sim = _PostSimulator(dry, fs, decimation, knee_db, post, saturation, makeup_hint)
+        ref = envelope_stats(resample_poly(to_stereo(reference), 1, decimation, axis=1), sim.fs_d)
+        dry_stats = sim.stats(0.0, 1.0, 10.0, 100.0)  # ratio 1: no compression
+        polish_evals = 0
+    else:
+        ref = envelope_stats(to_stereo(reference), fs)
+        sim = _Simulator(dry, fs, decimation, knee_db)
+        dry_stats = envelope_stats(sim.x, fs)
 
     m0 = optimal_makeup(dry_stats, ref)
     d_none = stats_distance(dry_stats, ref, m0)

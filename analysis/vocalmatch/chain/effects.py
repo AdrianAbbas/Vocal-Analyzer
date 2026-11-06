@@ -71,6 +71,12 @@ def one_pole_lowpass_coeff(cutoff_hz: float, fs: float) -> float:
     return 1.0 - math.exp(-2.0 * math.pi * fc / fs)
 
 
+def ms_to_samples(ms: float, fs: float) -> int:
+    """round(ms * fs / 1000) with ms first rounded to 0.001 ms (shared/CHAIN.md), so the
+    plug-in, which stores parameters as float, lands on the same sample."""
+    return int(round(round(float(ms), 3) * fs / 1000.0))
+
+
 def process_delay(x: np.ndarray, fs: float, p: Delay) -> np.ndarray:
     """Feedback delay with a one-pole high-cut inside the loop.
 
@@ -83,7 +89,7 @@ def process_delay(x: np.ndarray, fs: float, p: Delay) -> np.ndarray:
     if m <= 0.0:
         return x
     n = x.shape[1]
-    d = max(1, int(round(p.time_ms * fs / 1000.0)))
+    d = max(1, ms_to_samples(p.time_ms, fs))
     fb = p.feedback_pct / 100.0
     a = one_pole_lowpass_coeff(p.highcut_hz, fs)
     b_lp, a_lp = [a], [1.0, -(1.0 - a)]
@@ -135,7 +141,7 @@ def process_reverb(x: np.ndarray, fs: float, p: Reverb) -> np.ndarray:
     b_lp, a_lp = [a], [1.0, -(1.0 - a)]
 
     mono = 0.5 * (x[0] + x[1])
-    pre = int(round(p.predelay_ms * fs / 1000.0))
+    pre = ms_to_samples(p.predelay_ms, fs)
     inp = np.zeros(n)
     if pre < n:
         inp[pre:] = mono[: n - pre]

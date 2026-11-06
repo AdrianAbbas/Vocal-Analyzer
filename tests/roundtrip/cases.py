@@ -189,3 +189,142 @@ def run_combined_case(name: str) -> tuple[EQResult, CompResult, Preset]:
     shift = _rms_db(process_eq(x, FS, est.effects.eq)) - _rms_db(process_eq(x, FS, truth.effects.eq))
     comp_res = CompResult(c, est.effects.compressor, shift, _output_stats_distance(est, ref, dry))
     return eq_res, comp_res, est
+
+
+# ======================================================== milestone 3 effects
+# Each case renders the dry vocal through a realistic EQ + compressor and the effect, then
+# runs that effect's estimator on the true signal entering it, followed by the true effects
+# after it (the pipeline's coordinate descent supplies estimates of those instead; the
+# full-chain round trip covers that).
+from vocalmatch.chain.dynamics import process_compressor  # noqa: E402
+from vocalmatch.chain.effects import process_delay, process_doubler, process_reverb, process_saturation  # noqa: E402
+from vocalmatch.estimators.deesser import estimate_deesser  # noqa: E402
+from vocalmatch.estimators.delay import estimate_delay  # noqa: E402
+from vocalmatch.estimators.reverb import estimate_reverb  # noqa: E402
+from vocalmatch.estimators.saturation import estimate_saturation  # noqa: E402
+from vocalmatch.estimators.width import estimate_width  # noqa: E402
+from vocalmatch.preset import DeEsser, Delay, Doubler, Reverb, Saturation  # noqa: E402
+
+BASE_COMP = comp(-22, 4.0, 4.0, 90.0, 5.0)
+
+# tolerances
+DELAY_TIME_TOL_MS = 1.0
+DELAY_FB_TOL_PCT = 5.0
+DELAY_MIX_TOL_PCT = 2.0
+DELAY_HIGHCUT_TOL_FACTOR = 1.25
+REVERB_DECAY_TOL_REL = 0.20  # SPEC example: reverb decay +-20 %
+REVERB_PREDELAY_TOL_MS = 15.0
+REVERB_MIX_TOL_PCT = 3.0
+REVERB_DAMPING_TOL_FACTOR = 1.5
+DOUBLER_MIX_TOL_PCT = 5.0
+WIDTH_TOL_PCT = 10.0
+SAT_DRIVE_TOL_DB = 3.0
+SAT_MIX_TOL_PCT = 10.0
+DEESS_FREQ_TOL_REL = 0.15
+DEESS_THRESHOLD_TOL_DB = 3.0
+DEESS_REDUCTION_TOL_DB = 2.0
+
+M3_CASES: dict[str, dict] = {
+    "slapback delay": {"delay": Delay(True, 1.0, 120.0, 0.0, 22.0, 4000.0)},
+    "1/8 dotted delay": {"delay": Delay(True, 1.0, 468.75, 35.0, 12.0, 5000.0)},
+    "plate reverb": {"reverb": Reverb(True, 1.0, 1.6, 20.0, 20.0, 7000.0)},
+    "hall reverb": {"reverb": Reverb(True, 1.0, 3.2, 60.0, 15.0, 5000.0)},
+    "room reverb": {"reverb": Reverb(True, 1.0, 0.6, 5.0, 30.0, 9000.0)},
+    "delay into reverb": {"delay": Delay(True, 1.0, 375.0, 25.0, 12.0, 6000.0),
+                          "reverb": Reverb(True, 1.0, 1.8, 30.0, 18.0, 7000.0)},
+    "doubler": {"doubler": Doubler(True, 1.0, 35.0, 100.0)},
+    "doubler + width + reverb": {"reverb": Reverb(True, 1.0, 1.5, 20.0, 15.0, 7000.0),
+                                 "doubler": Doubler(True, 1.0, 20.0, 140.0)},
+    "warm saturation": {"saturation": Saturation(True, 1.0, 9.0, 50.0)},
+    "hard saturation": {"saturation": Saturation(True, 1.0, 21.0, 30.0)},
+    "de-esser": {"deesser": DeEsser(True, 1.0, 6500.0, -32.0, 5.0)},
+    "strong de-esser": {"deesser": DeEsser(True, 1.0, 5000.0, -40.0, 10.0)},
+}
+
+
+@dataclass
+class M3Result:
+    true: dict
+    est: dict
+    errors: dict
+    checks: dict
+
+    @property
+    def ok(self) -> bool:
+        return all(self.checks.values())
+
+
+def _truth(name: str) -> Preset:
+    p = Preset()
+    p.effects.eq = eq_preset(EQ_CASES["presence"])
+    p.effects.compressor = BASE_COMP
+    for k, v in M3_CASES[name].items():
+        setattr(p.effects, k, v)
+    return p
+
+
+def _upto(p: Preset, x: np.ndarray, stop: str) -> np.ndarray:
+    from vocalmatch.pipeline import _Chain
+
+    return _Chain(p.effects, FS).upto(x, stop)
+
+
+def _post(p: Preset, after: str):
+    from vocalmatch.pipeline import _Chain
+
+    return _Chain(p.effects, FS).time_effects(after)
+
+
+def run_m3_case(name: str) -> M3Result:
+    dry = to_stereo(dry_vocal())
+    truth = _truth(name)
+    ref = render(truth, dry, FS)
+    fx = M3_CASES[name]
+    est: dict = {}
+    errors: dict = {}
+    checks: dict = {}
+    if "delay" in fx:
+        t, e = fx["delay"], estimate_delay(ref, dry, FS, pre=_upto(truth, dry, "delay")).delay
+        est["delay"] = e
+        errors["delay"] = {"time_ms": e.time_ms - t.time_ms, "feedback_pct": e.feedback_pct - t.feedback_pct,
+                           "mix_pct": e.mix_pct - t.mix_pct, "highcut_factor": e.highcut_hz / t.highcut_hz}
+        er = errors["delay"]
+        checks.update({"delay detected": e.enabled, "delay time": abs(er["time_ms"]) <= DELAY_TIME_TOL_MS,
+                       "delay feedback": abs(er["feedback_pct"]) <= DELAY_FB_TOL_PCT,
+                       "delay mix": abs(er["mix_pct"]) <= DELAY_MIX_TOL_PCT,
+                       "delay high-cut": 1 / DELAY_HIGHCUT_TOL_FACTOR <= er["highcut_factor"] <= DELAY_HIGHCUT_TOL_FACTOR})
+    if "reverb" in fx:
+        t, e = fx["reverb"], estimate_reverb(ref, dry, FS, pre=_upto(truth, dry, "reverb")).reverb
+        est["reverb"] = e
+        errors["reverb"] = {"decay_rel": e.decay_s / t.decay_s - 1.0, "predelay_ms": e.predelay_ms - t.predelay_ms,
+                            "mix_pct": e.mix_pct - t.mix_pct, "damping_factor": e.damping_hz / t.damping_hz}
+        er = errors["reverb"]
+        checks.update({"reverb detected": e.enabled, "reverb decay": abs(er["decay_rel"]) <= REVERB_DECAY_TOL_REL,
+                       "reverb predelay": abs(er["predelay_ms"]) <= REVERB_PREDELAY_TOL_MS,
+                       "reverb mix": abs(er["mix_pct"]) <= REVERB_MIX_TOL_PCT,
+                       "reverb damping": 1 / REVERB_DAMPING_TOL_FACTOR <= er["damping_factor"] <= REVERB_DAMPING_TOL_FACTOR})
+    if "doubler" in fx:
+        t, e = fx["doubler"], estimate_width(ref, dry, FS, pre=_upto(truth, dry, "doubler")).doubler
+        est["doubler"] = e
+        errors["doubler"] = {"mix_pct": e.mix_pct - t.mix_pct, "width_pct": e.width_pct - t.width_pct}
+        checks.update({"doubler detected": e.enabled, "doubler mix": abs(errors["doubler"]["mix_pct"]) <= DOUBLER_MIX_TOL_PCT,
+                       "width": abs(errors["doubler"]["width_pct"]) <= WIDTH_TOL_PCT})
+    if "saturation" in fx:
+        t = fx["saturation"]
+        e = estimate_saturation(ref, _upto(truth, dry, "saturation"), FS, _post(truth, None)).saturation
+        est["saturation"] = e
+        errors["saturation"] = {"drive_db": e.drive_db - t.drive_db, "mix_pct": e.mix_pct - t.mix_pct}
+        checks.update({"saturation detected": e.enabled,
+                       "saturation drive": abs(errors["saturation"]["drive_db"]) <= SAT_DRIVE_TOL_DB,
+                       "saturation mix": abs(errors["saturation"]["mix_pct"]) <= SAT_MIX_TOL_PCT})
+    if "deesser" in fx:
+        t = fx["deesser"]
+        e = estimate_deesser(ref, _upto(truth, dry, "deesser"), FS, post=_post(truth, None)).deesser
+        est["deesser"] = e
+        errors["deesser"] = {"frequency_rel": e.frequency_hz / t.frequency_hz - 1.0,
+                             "threshold_db": e.threshold_db - t.threshold_db, "reduction_db": e.reduction_db - t.reduction_db}
+        er = errors["deesser"]
+        checks.update({"de-esser detected": e.enabled, "de-esser frequency": abs(er["frequency_rel"]) <= DEESS_FREQ_TOL_REL,
+                       "de-esser threshold": abs(er["threshold_db"]) <= DEESS_THRESHOLD_TOL_DB,
+                       "de-esser reduction": abs(er["reduction_db"]) <= DEESS_REDUCTION_TOL_DB})
+    return M3Result(fx, est, errors, checks)

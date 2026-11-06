@@ -9,7 +9,10 @@ Both run in double precision.
 
 Conventions: processing is stereo `(L, R)`; a mono input is copied to both
 channels. All state starts at zero on reset. `fs` is the sample rate.
-`dB→lin(x) = 10^(x/20)`. A disabled effect is a bit-exact bypass. An
+`dB→lin(x) = 10^(x/20)`. `round()` is Python's: half to even. Times in
+milliseconds become samples as `round(t·fs/1000)` with `t` first rounded to
+0.001 ms (the plug-in stores parameters as float; without this a value
+such as 375 ms = 16537.5 samples at 44.1 kHz could land one sample off). A disabled effect is a bit-exact bypass. An
 effect whose wet amount is zero (`mix_pct = 0`, `reduction_db = 0`) is
 also skipped. All of these are latency-free (no look-ahead).
 

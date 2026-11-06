@@ -12,7 +12,7 @@ from . import __version__
 def _cmd_analyze(args: argparse.Namespace) -> int:
     from .audio_io import load_audio, write_audio
     from .chain import render
-    from .pipeline import NOT_YET_ESTIMATED, analyze
+    from .pipeline import analyze
 
     dry, fs = load_audio(args.dry)
     reference, _ = load_audio(args.reference, target_fs=fs)
@@ -31,7 +31,16 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         f"  compressor: thr {c.threshold_db:.1f} dB, ratio {c.ratio:.2f}:1, attack {c.attack_ms:.1f} ms, "
         f"release {c.release_ms:.0f} ms, make-up {c.makeup_db:+.1f} dB, confidence {c.confidence:.2f}"
     )
-    print(f"  not yet estimated (disabled): {', '.join(NOT_YET_ESTIMATED)}")
+    s, d, dl, r, w = e.saturation, e.deesser, e.delay, e.reverb, e.doubler
+
+    def state(effect, text):
+        return f"{text}, confidence {effect.confidence:.2f}" if effect.enabled else "none found"
+
+    print(f"  saturation: {state(s, f'drive {s.drive_db:.1f} dB, mix {s.mix_pct:.0f} %')}")
+    print(f"  de-esser:   {state(d, f'{d.frequency_hz:.0f} Hz, thr {d.threshold_db:.1f} dB, up to {d.reduction_db:.1f} dB')}")
+    print(f"  delay:      {state(dl, f'{dl.time_ms:.1f} ms, feedback {dl.feedback_pct:.0f} %, mix {dl.mix_pct:.0f} %, high-cut {dl.highcut_hz:.0f} Hz')}")
+    print(f"  reverb:     {state(r, f'decay {r.decay_s:.2f} s, predelay {r.predelay_ms:.0f} ms, mix {r.mix_pct:.0f} %, damping {r.damping_hz:.0f} Hz')}")
+    print(f"  doubler:    {state(w, f'mix {w.mix_pct:.0f} %, width {w.width_pct:.0f} %')}")
     if args.render:
         write_audio(args.render, render(preset, dry, fs, tail_s=args.tail), fs)
         print(f"wrote {args.render}")

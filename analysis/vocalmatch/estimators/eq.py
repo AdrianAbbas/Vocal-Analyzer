@@ -198,30 +198,38 @@ def _greedy_peaks(prob: _Problem, peak_ids, params, offset):
     return _cost(prob, active, params, offset), offset, params
 
 
+MERGE_COST_TOL = 0.02  # a merge may raise the fit cost by this fraction (+ a small absolute slack)
+
+
 def _merge_duplicate_peaks(prob: _Problem, peak_ids, params, offset):
-    """Two peaks closer than 1/6 octave with similar Q do the job of one:
-    merge them (gains add) and refit, so the preset stays readable."""
+    """Two peaks closer than 1/6 octave usually do the job of one: merge them (gains add),
+    refit, and keep the merge when the fit is (nearly) as good, so the preset stays readable.
+    Deciding by the fit rather than by a Q threshold keeps the result stable when numerical
+    differences (BLAS, CPU) leave the two peaks with somewhat different Q."""
+    rejected: set[tuple[int, int]] = set()
     while True:
         live = [i for i in peak_ids if i in params and abs(params[i][1]) >= PRUNE_DB]
-        pair = None
-        for a in live:
-            for b in live:
-                if a < b:
-                    fa, ga, qa = params[a]
-                    fb, gb, qb = params[b]
-                    if abs(np.log2(fa / fb)) < 1 / 6 and abs(np.log2(qa / qb)) < 0.6:
-                        pair = (a, b)
-                        break
-            if pair:
-                break
-        if pair is None:
+        pairs = sorted(
+            ((abs(np.log2(params[a][0] / params[b][0])), a, b) for a in live for b in live
+             if a < b and (a, b) not in rejected and abs(np.log2(params[a][0] / params[b][0])) < 1 / 6),
+        )
+        if not pairs:
             return offset, params
-        a, b = pair
+        _, a, b = pairs[0]
         (fa, ga, qa), (fb, gb, qb) = params[a], params[b]
-        params = dict(params)
-        params[a] = (float(np.sqrt(fa * fb)), ga + gb, float(np.sqrt(qa * qb)))
-        del params[b]
-        offset, params = _fit(prob, sorted(params), params, offset)
+        merged = dict(params)
+        # gain-weighted centre and Q of the pair
+        wa, wb = abs(ga) + 1e-9, abs(gb) + 1e-9
+        merged[a] = (float(np.exp((wa * np.log(fa) + wb * np.log(fb)) / (wa + wb))), ga + gb,
+                     float(np.exp((wa * np.log(qa) + wb * np.log(qb)) / (wa + wb))))
+        del merged[b]
+        off_m, par_m = _fit(prob, sorted(merged), merged, offset)
+        before = _cost(prob, sorted(params), params, offset)
+        after = _cost(prob, sorted(par_m), par_m, off_m)
+        if after <= before * (1.0 + MERGE_COST_TOL) + 1e-4:
+            offset, params = off_m, par_m
+        else:
+            rejected.add((a, b))
 
 
 def estimate_eq(
@@ -235,9 +243,14 @@ def estimate_eq(
     n_shelf_starts: int = 3,
     n_random_starts: int = 4,
     seed: int = 0,
+    dry_correction: np.ndarray | None = None,
 ) -> EQEstimate:
+    """*dry_correction*: optional power ratio per LTAS bin applied to the dry LTAS: the
+    spectral effect of the (non-linear) effects after the EQ, so they are not fitted as EQ."""
     freqs, p_ref = ltas(reference, fs)
     _, p_dry = ltas(dry, fs)
+    if dry_correction is not None:
+        p_dry = p_dry * dry_correction
     prob = _Problem(freqs, p_dry, p_ref, fs, f_lo, f_hi, points_per_octave)
 
     offset0 = float(np.sum(prob.w * prob.diff) / np.sum(prob.w))

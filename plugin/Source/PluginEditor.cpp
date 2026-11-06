@@ -188,6 +188,26 @@ VocalMatchEditor::VocalMatchEditor (VocalMatchProcessor& p)
     comp->addKnob (P::compRelease, "Release");
     comp->addKnob (P::compKnee, "Knee");
     comp->addKnob (P::compMakeup, "Make-up");
+    auto* sat = cards.add (new EffectCard (p, "Saturation", "saturation", P::satOn));
+    sat->addKnob (P::satDrive, "Drive");
+    sat->addKnob (P::satMix, "Mix");
+    auto* deess = cards.add (new EffectCard (p, "De-esser", "deesser", P::deessOn));
+    deess->addKnob (P::deessFreq, "Freq");
+    deess->addKnob (P::deessThreshold, "Threshold");
+    deess->addKnob (P::deessReduction, "Reduction");
+    auto* delay = cards.add (new EffectCard (p, "Delay", "delay", P::delayOn));
+    delay->addKnob (P::delayTime, "Time");
+    delay->addKnob (P::delayFeedback, "Feedback");
+    delay->addKnob (P::delayMix, "Mix");
+    delay->addKnob (P::delayHighcut, "High-cut");
+    auto* reverb = cards.add (new EffectCard (p, "Reverb", "reverb", P::reverbOn));
+    reverb->addKnob (P::reverbDecay, "Decay");
+    reverb->addKnob (P::reverbPredelay, "Predelay");
+    reverb->addKnob (P::reverbMix, "Mix");
+    reverb->addKnob (P::reverbDamping, "Damping");
+    auto* doubler = cards.add (new EffectCard (p, "Doubler / width", "doubler", P::doublerOn));
+    doubler->addKnob (P::doublerMix, "Mix");
+    doubler->addKnob (P::doublerWidth, "Width");
     auto* output = cards.add (new EffectCard (p, "Output gain", "output_gain", P::outputOn));
     output->addKnob (P::outputGain, "Gain");
     for (auto* c : cards)

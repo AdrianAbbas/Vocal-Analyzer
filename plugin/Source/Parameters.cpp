@@ -72,6 +72,42 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     comp->addChild (std::make_unique<APF> (pid (compMakeup), "Make-up", range (-24.0f, 36.0f), 0.0f, attrs ("dB", 1)));
     layout.add (std::move (comp));
 
+    const int v2 = kMilestone3Version;
+    auto sat = group ("saturation", "Saturation");
+    sat->addChild (std::make_unique<APB> (pid (satOn, v2), "Saturation on", true));
+    sat->addChild (std::make_unique<APF> (pid (satDrive, v2), "Drive", range (0.0f, 36.0f), 0.0f, attrs ("dB", 1)));
+    sat->addChild (std::make_unique<APF> (pid (satMix, v2), "Saturation mix", range (0.0f, 100.0f), 0.0f, attrs ("%", 0)));
+    layout.add (std::move (sat));
+
+    auto deess = group ("deesser", "De-esser");
+    deess->addChild (std::make_unique<APB> (pid (deessOn, v2), "De-esser on", true));
+    deess->addChild (std::make_unique<APF> (pid (deessFreq, v2), "De-esser frequency", range (2000.0f, 16000.0f, 6500.0f), 6500.0f, attrs ("Hz", 0)));
+    deess->addChild (std::make_unique<APF> (pid (deessThreshold, v2), "De-esser threshold", range (-60.0f, 0.0f), 0.0f, attrs ("dB", 1)));
+    deess->addChild (std::make_unique<APF> (pid (deessReduction, v2), "De-esser reduction", range (0.0f, 24.0f), 0.0f, attrs ("dB", 1)));
+    layout.add (std::move (deess));
+
+    auto delay = group ("delay", "Delay");
+    delay->addChild (std::make_unique<APB> (pid (delayOn, v2), "Delay on", true));
+    delay->addChild (std::make_unique<APF> (pid (delayTime, v2), "Delay time", range (1.0f, 2000.0f, 300.0f), 250.0f, attrs ("ms", 1)));
+    delay->addChild (std::make_unique<APF> (pid (delayFeedback, v2), "Delay feedback", range (0.0f, 95.0f), 0.0f, attrs ("%", 0)));
+    delay->addChild (std::make_unique<APF> (pid (delayMix, v2), "Delay mix", range (0.0f, 100.0f), 0.0f, attrs ("%", 0)));
+    delay->addChild (std::make_unique<APF> (pid (delayHighcut, v2), "Delay high-cut", range (500.0f, 20000.0f, 5000.0f), 8000.0f, attrs ("Hz", 0)));
+    layout.add (std::move (delay));
+
+    auto reverb = group ("reverb", "Reverb");
+    reverb->addChild (std::make_unique<APB> (pid (reverbOn, v2), "Reverb on", true));
+    reverb->addChild (std::make_unique<APF> (pid (reverbDecay, v2), "Reverb decay", range (0.1f, 10.0f, 1.5f), 1.5f, attrs ("s", 2)));
+    reverb->addChild (std::make_unique<APF> (pid (reverbPredelay, v2), "Reverb predelay", range (0.0f, 250.0f, 40.0f), 0.0f, attrs ("ms", 0)));
+    reverb->addChild (std::make_unique<APF> (pid (reverbMix, v2), "Reverb mix", range (0.0f, 100.0f), 0.0f, attrs ("%", 0)));
+    reverb->addChild (std::make_unique<APF> (pid (reverbDamping, v2), "Reverb damping", range (500.0f, 20000.0f, 5000.0f), 8000.0f, attrs ("Hz", 0)));
+    layout.add (std::move (reverb));
+
+    auto doubler = group ("doubler", "Doubler / width");
+    doubler->addChild (std::make_unique<APB> (pid (doublerOn, v2), "Doubler on", true));
+    doubler->addChild (std::make_unique<APF> (pid (doublerMix, v2), "Doubler mix", range (0.0f, 100.0f), 0.0f, attrs ("%", 0)));
+    doubler->addChild (std::make_unique<APF> (pid (doublerWidth, v2), "Width", range (0.0f, 200.0f), 100.0f, attrs ("%", 0)));
+    layout.add (std::move (doubler));
+
     auto output = group ("output", "Output gain");
     output->addChild (std::make_unique<APB> (pid (outputOn), "Output gain on", true));
     output->addChild (std::make_unique<APF> (pid (outputGain), "Output gain", range (-36.0f, 36.0f), 0.0f, attrs ("dB", 1)));
@@ -105,6 +141,26 @@ Reader::Reader (juce::AudioProcessorValueTreeState& s)
     cRel = get (s, compRelease);
     cKnee = get (s, compKnee);
     cMakeup = get (s, compMakeup);
+    sOn = get (s, satOn);
+    sDrive = get (s, satDrive);
+    sMix = get (s, satMix);
+    dsOn = get (s, deessOn);
+    dsFreq = get (s, deessFreq);
+    dsThr = get (s, deessThreshold);
+    dsRed = get (s, deessReduction);
+    dlOn = get (s, delayOn);
+    dlTime = get (s, delayTime);
+    dlFb = get (s, delayFeedback);
+    dlMix = get (s, delayMix);
+    dlHc = get (s, delayHighcut);
+    rvOn = get (s, reverbOn);
+    rvDecay = get (s, reverbDecay);
+    rvPre = get (s, reverbPredelay);
+    rvMix = get (s, reverbMix);
+    rvDamp = get (s, reverbDamping);
+    dbOn = get (s, doublerOn);
+    dbMix = get (s, doublerMix);
+    dbWidth = get (s, doublerWidth);
 }
 
 ChainParams Reader::readUnscaled() const noexcept
@@ -126,6 +182,11 @@ ChainParams Reader::readUnscaled() const noexcept
         dst.q = val (src.q);
     }
     p.compressor = { on (cOn), val (cThr), val (cRatio), val (cAtt), val (cRel), val (cKnee), val (cMakeup) };
+    p.saturation = { on (sOn), val (sDrive), val (sMix) };
+    p.deesser = { on (dsOn), val (dsFreq), val (dsThr), val (dsRed) };
+    p.delay = { on (dlOn), val (dlTime), val (dlFb), val (dlMix), val (dlHc) };
+    p.reverb = { on (rvOn), val (rvDecay), val (rvPre), val (rvMix), val (rvDamp) };
+    p.doubler = { on (dbOn), val (dbMix), val (dbWidth) };
     return p;
 }
 

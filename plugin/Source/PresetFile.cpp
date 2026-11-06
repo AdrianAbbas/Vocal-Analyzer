@@ -98,6 +98,41 @@ juce::Result parsePreset (const juce::String& jsonText, PresetValues& out)
                 w.number ("knee_db", params::compKnee);
                 w.number ("makeup_db", params::compMakeup);
             }
+            else if (key == "saturation")
+            {
+                w.flag ("enabled", params::satOn);
+                w.number ("drive_db", params::satDrive);
+                w.number ("mix_pct", params::satMix);
+            }
+            else if (key == "deesser")
+            {
+                w.flag ("enabled", params::deessOn);
+                w.number ("frequency_hz", params::deessFreq);
+                w.number ("threshold_db", params::deessThreshold);
+                w.number ("reduction_db", params::deessReduction);
+            }
+            else if (key == "delay")
+            {
+                w.flag ("enabled", params::delayOn);
+                w.number ("time_ms", params::delayTime);
+                w.number ("feedback_pct", params::delayFeedback);
+                w.number ("mix_pct", params::delayMix);
+                w.number ("highcut_hz", params::delayHighcut); // sync_note is informational
+            }
+            else if (key == "reverb")
+            {
+                w.flag ("enabled", params::reverbOn);
+                w.number ("decay_s", params::reverbDecay);
+                w.number ("predelay_ms", params::reverbPredelay);
+                w.number ("mix_pct", params::reverbMix);
+                w.number ("damping_hz", params::reverbDamping);
+            }
+            else if (key == "doubler")
+            {
+                w.flag ("enabled", params::doublerOn);
+                w.number ("mix_pct", params::doublerMix);
+                w.number ("width_pct", params::doublerWidth);
+            }
             else if ((bool) e["enabled"])
             {
                 out.notInThisVersion.add (key);

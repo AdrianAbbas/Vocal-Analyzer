@@ -22,7 +22,7 @@ import pytest
 import soundfile as sf
 
 from vocalmatch.chain import render
-from vocalmatch.preset import EFFECT_ORDER, Compressor, EQBand, Preset
+from vocalmatch.preset import EFFECT_ORDER, Compressor, DeEsser, Delay, Doubler, EQBand, Preset, Reverb, Saturation
 from vocalmatch.synth import synthetic_vocal
 
 REPO = Path(__file__).resolve().parents[2]
@@ -32,8 +32,8 @@ SPEC_LIMIT_DB = -40.0  # SPEC: residual within -40 dB
 # parameter storage in the plug-in. Anything above this is a real divergence.
 TIGHT_LIMIT_DB = -80.0
 
-# Effects the plug-in implements so far (the others are written disabled for this check).
-PLUGIN_EFFECTS = {"input_gain", "eq", "compressor", "output_gain"}
+# Effects the plug-in implements (all of them since milestone 3).
+PLUGIN_EFFECTS = set(EFFECT_ORDER)
 
 
 def render_binary() -> Path | None:
@@ -102,6 +102,35 @@ def heavy_preset() -> Preset:
     return p
 
 
+def full_preset() -> Preset:
+    """Every effect on, the doubler with width too."""
+    p = Preset.load(REPO / "shared/examples/example_preset.json")
+    p.effects.doubler = Doubler(enabled=True, confidence=1.0, mix_pct=35.0, width_pct=140.0)
+    return p
+
+
+def single(effect: str):
+    """One effect alone, with settings that exercise its edge cases."""
+    def make() -> Preset:
+        p = Preset()
+        e = p.effects
+        if effect == "saturation":
+            e.saturation = Saturation(enabled=True, drive_db=24.0, mix_pct=70.0)
+            e.input_gain.enabled, e.input_gain.gain_db = True, 6.0  # into the clipping region
+        elif effect == "deesser":
+            e.deesser = DeEsser(enabled=True, frequency_hz=5200.0, threshold_db=-40.0, reduction_db=12.0)
+        elif effect == "delay":  # 375 ms = 16537.5 samples at 44.1 kHz: Python's round() goes to even
+            e.delay = Delay(enabled=True, time_ms=375.0, feedback_pct=60.0, mix_pct=35.0, highcut_hz=3500.0)
+        elif effect == "reverb":  # odd predelay, long decay, low damping
+            e.reverb = Reverb(enabled=True, decay_s=4.2, predelay_ms=37.3, mix_pct=45.0, damping_hz=2600.0)
+        elif effect == "doubler":
+            e.doubler = Doubler(enabled=True, mix_pct=60.0, width_pct=170.0)
+        elif effect == "width":
+            e.doubler = Doubler(enabled=True, mix_pct=0.0, width_pct=40.0)
+        return p
+    return make
+
+
 def bypassed_preset() -> Preset:
     p = heavy_preset()
     for name in PLUGIN_EFFECTS:
@@ -115,7 +144,7 @@ def residual_db(a: np.ndarray, b: np.ndarray) -> float:
     return float(20 * np.log10(max(err, 1e-30) / ref))
 
 
-def run_cpp(binary: Path, preset: Preset, dry: Path, out: Path, match: float, block: int, tail: float = 0.0) -> np.ndarray:
+def run_cpp(binary: Path, preset: Preset, dry: Path, out: Path, match: float, block: int, tail: float = 1.0) -> np.ndarray:
     preset_path = out.with_suffix(".json")
     preset.save(preset_path)
     cmd = [str(binary), "--preset", str(preset_path), "--in", str(dry), "--out", str(out),
@@ -132,6 +161,9 @@ CASES = {
     "heavy-100%-block64": (heavy_preset, 100.0, 64),
     "heavy-25%-block1024": (heavy_preset, 25.0, 1024),
     "heavy-0%-block512": (heavy_preset, 0.0, 512),
+    "full-100%-block512": (full_preset, 100.0, 512),
+    "full-70%-block100": (full_preset, 70.0, 100),
+    **{f"{fx}-100%-block256": (single(fx), 100.0, 256) for fx in ("saturation", "deesser", "delay", "reverb", "doubler", "width")},
 }
 
 
@@ -141,7 +173,7 @@ def test_cpp_matches_python(binary, dry_file, tmp_path, case):
     dry_path, dry = dry_file
     preset = make()
     y_cpp = run_cpp(binary, preset, dry_path, tmp_path / "cpp.wav", match, block)
-    y_py = render(preset, dry, FS, match_amount=match / 100.0)
+    y_py = render(preset, dry, FS, tail_s=1.0, match_amount=match / 100.0)  # tails ring out
     assert y_cpp.shape == y_py.shape
     r = residual_db(y_cpp, y_py)
     print(f"{case}: residual {r:.1f} dB")
@@ -151,14 +183,15 @@ def test_cpp_matches_python(binary, dry_file, tmp_path, case):
 
 def test_bypassed_is_bit_exact(binary, dry_file, tmp_path):
     dry_path, dry = dry_file
-    y = run_cpp(binary, bypassed_preset(), dry_path, tmp_path / "bypass.wav", 100.0, 512)
+    y = run_cpp(binary, bypassed_preset(), dry_path, tmp_path / "bypass.wav", 100.0, 512, tail=0.0)
     np.testing.assert_array_equal(y, dry)
 
 
 def test_match_amount_zero_is_neutral(binary, dry_file, tmp_path):
-    """At 0 % every effect is at neutral: gains 0 dB, EQ flat, ratio 1:1, no make-up."""
+    """At 0 % every effect is at neutral: gains 0 dB, EQ flat, ratio 1:1, no make-up, every
+    mix and reduction 0, width 100 %."""
     dry_path, dry = dry_file
-    y = run_cpp(binary, heavy_preset(), dry_path, tmp_path / "zero.wav", 0.0, 512)
+    y = run_cpp(binary, full_preset(), dry_path, tmp_path / "zero.wav", 0.0, 512, tail=0.0)
     assert residual_db(y, dry) < -120.0
 
 
@@ -169,6 +202,10 @@ def test_preset_file_fields_reach_the_plugin(binary, tmp_path):
     expected = {"match_amount", "input_on", "input_gain_db", "output_on", "output_gain_db", "eq_on", "comp_on",
                 "comp_threshold_db", "comp_ratio", "comp_attack_ms", "comp_release_ms", "comp_knee_db", "comp_makeup_db"}
     expected |= {f"eq{b}_{k}" for b in range(1, 7) for k in ("on", "type", "freq_hz", "gain_db", "q")}
+    expected |= {"sat_on", "sat_drive_db", "sat_mix_pct", "deess_on", "deess_freq_hz", "deess_threshold_db",
+                 "deess_reduction_db", "delay_on", "delay_time_ms", "delay_feedback_pct", "delay_mix_pct",
+                 "delay_highcut_hz", "reverb_on", "reverb_decay_s", "reverb_predelay_ms", "reverb_mix_pct",
+                 "reverb_damping_hz", "doubler_on", "doubler_mix_pct", "doubler_width_pct"}
     assert expected <= ids, sorted(expected - ids)
 
 
