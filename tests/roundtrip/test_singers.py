@@ -91,11 +91,13 @@ def test_one_singer_stays_one(seed, voice):
 
 
 def test_unsure_detection_says_so():
-    # In this duet the clusters are only just apart: the result says it is unsure and points
-    # to region selection.
-    d = synthetic_duet(43)
+    # Two similar voices (5 semitones apart, nearly the same timbre): the detection cannot
+    # tell them apart clearly, says it is unsure and points to region selection.
+    from vocalmatch.synth import Voice
+
+    d = synthetic_duet(40, voice_b=Voice(pitch_semitones=5.0, formant_scale=1.1, vibrato_scale=1.1, breath=1.4))
     m = detect_singers(d.mix.T, FS)
-    assert m.unsure
+    assert m.unsure, m.message
     assert "unsure" in m.message and "region selection" in m.message
 
 

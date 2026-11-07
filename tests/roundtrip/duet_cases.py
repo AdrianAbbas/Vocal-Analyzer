@@ -53,15 +53,15 @@ class Duet:
         return sum(b - a for a, b, w in self.sections if w == "AB")
 
 
-@functools.lru_cache(maxsize=2)
-def synthetic_duet(seed: int = 40) -> Duet:
+@functools.lru_cache(maxsize=4)
+def synthetic_duet(seed: int = 40, voice_b: Voice | None = None) -> Duet:
     total = int(sum(s for _, s in LAYOUT) * FS)
     dry = {"A": np.zeros(total), "B": np.zeros(total)}
     sections, pos = [], 0
     for k, (who, secs) in enumerate(LAYOUT):
         n = int(secs * FS)
         for singer in who:
-            voice = VOICE_A if singer == "A" else VOICE_B
+            voice = VOICE_A if singer == "A" else (voice_b or VOICE_B)
             part = synthetic_vocal(seed=seed + 7 * k + (0 if singer == "A" else 3), duration_s=secs, fs=FS, voice=voice)
             dry[singer][pos : pos + n] += part[:n]
         sections.append((pos / FS, (pos + n) / FS, who))
