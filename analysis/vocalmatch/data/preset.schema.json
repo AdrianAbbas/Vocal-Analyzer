@@ -4,7 +4,11 @@
   "title": "Vocal Match preset",
   "description": "Effect-chain settings estimated from a reference vocal. Shared by the Python analyzer (/analysis) and the JUCE plugin (/plugin). Units are in the key names (_hz, _db, _ms, _s, _pct); ratio and q are unitless. Effect order is fixed: input_gain, eq, compressor, saturation, deesser, delay, reverb, doubler, output_gain. The exact DSP of each effect is specified in shared/CHAIN.md.",
   "type": "object",
-  "required": ["schema_version", "reference", "effects"],
+  "required": [
+    "schema_version",
+    "reference",
+    "effects"
+  ],
   "additionalProperties": false,
   "properties": {
     "schema_version": {
@@ -14,137 +18,406 @@
     "generator": {
       "type": "object",
       "properties": {
-        "name": {"type": "string"},
-        "version": {"type": "string"}
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
       },
       "additionalProperties": true
     },
     "reference": {
       "type": "object",
-      "required": ["filename", "sample_rate_hz"],
+      "required": [
+        "filename",
+        "sample_rate_hz"
+      ],
       "additionalProperties": false,
       "properties": {
-        "filename": {"type": "string"},
-        "sample_rate_hz": {"type": "integer", "minimum": 8000, "maximum": 384000},
-        "tempo_bpm": {"type": ["number", "null"], "minimum": 20, "maximum": 400},
-        "duration_s": {"type": ["number", "null"], "minimum": 0}
+        "filename": {
+          "type": "string"
+        },
+        "sample_rate_hz": {
+          "type": "integer",
+          "minimum": 8000,
+          "maximum": 384000
+        },
+        "tempo_bpm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 20,
+          "maximum": 400
+        },
+        "duration_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
     "effects": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["input_gain", "eq", "compressor", "saturation", "deesser", "delay", "reverb", "doubler", "output_gain"],
+      "required": [
+        "input_gain",
+        "eq",
+        "compressor",
+        "saturation",
+        "deesser",
+        "delay",
+        "reverb",
+        "doubler",
+        "output_gain"
+      ],
       "properties": {
-        "input_gain": {"$ref": "#/$defs/gain"},
-        "eq": {"$ref": "#/$defs/eq"},
-        "compressor": {"$ref": "#/$defs/compressor"},
-        "saturation": {"$ref": "#/$defs/saturation"},
-        "deesser": {"$ref": "#/$defs/deesser"},
-        "delay": {"$ref": "#/$defs/delay"},
-        "reverb": {"$ref": "#/$defs/reverb"},
-        "doubler": {"$ref": "#/$defs/doubler"},
-        "output_gain": {"$ref": "#/$defs/gain"}
+        "input_gain": {
+          "$ref": "#/$defs/gain"
+        },
+        "eq": {
+          "$ref": "#/$defs/eq"
+        },
+        "compressor": {
+          "$ref": "#/$defs/compressor"
+        },
+        "saturation": {
+          "$ref": "#/$defs/saturation"
+        },
+        "deesser": {
+          "$ref": "#/$defs/deesser"
+        },
+        "delay": {
+          "$ref": "#/$defs/delay"
+        },
+        "reverb": {
+          "$ref": "#/$defs/reverb"
+        },
+        "doubler": {
+          "$ref": "#/$defs/doubler"
+        },
+        "output_gain": {
+          "$ref": "#/$defs/gain"
+        }
       }
     },
     "diagnostics": {
       "description": "Free-form estimator details (fit residuals etc.). Ignored by the plugin.",
       "type": "object"
+    },
+    "pitch_correction": {
+      "description": "Observation, not an effect of the chain (milestone 7): how strongly the reference vocal is pitch-corrected, relative to the dry vocal. The plug-in shows it; it does not correct pitch.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detected",
+        "confidence",
+        "amount_pct"
+      ],
+      "properties": {
+        "detected": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "amount_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "How much of the dry vocal's own intonation (note landing, vibrato, drift) the correction removes."
+        },
+        "retune_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Approximate time to reach each note (95 %); within a factor of 2."
+        },
+        "retune": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "fast",
+            "medium",
+            "slow",
+            null
+          ]
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tuning_offset_cents": {
+          "type": "number",
+          "minimum": -50,
+          "maximum": 50
+        }
+      }
     }
   },
   "$defs": {
-    "enabled": {"type": "boolean", "description": "false = effect bypassed."},
+    "enabled": {
+      "type": "boolean",
+      "description": "false = effect bypassed."
+    },
     "confidence": {
-      "type": "number", "minimum": 0, "maximum": 1,
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
       "description": "Estimator's confidence in these settings. 0 = not estimated (neutral defaults)."
     },
     "gain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "gain_db"],
+      "required": [
+        "enabled",
+        "confidence",
+        "gain_db"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "gain_db": {"type": "number", "minimum": -36, "maximum": 36}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "gain_db": {
+          "type": "number",
+          "minimum": -36,
+          "maximum": 36
+        }
       }
     },
     "eq_band": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "freq_hz", "gain_db", "q", "enabled"],
+      "required": [
+        "type",
+        "freq_hz",
+        "gain_db",
+        "q",
+        "enabled"
+      ],
       "properties": {
-        "type": {"enum": ["low_shelf", "peak", "high_shelf"]},
-        "freq_hz": {"type": "number", "minimum": 20, "maximum": 20000},
-        "gain_db": {"type": "number", "minimum": -12, "maximum": 12},
-        "q": {"type": "number", "minimum": 0.1, "maximum": 18},
-        "enabled": {"type": "boolean"}
+        "type": {
+          "enum": [
+            "low_shelf",
+            "peak",
+            "high_shelf"
+          ]
+        },
+        "freq_hz": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 20000
+        },
+        "gain_db": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12
+        },
+        "q": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 18
+        },
+        "enabled": {
+          "type": "boolean"
+        }
       }
     },
     "eq": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "bands"],
+      "required": [
+        "enabled",
+        "confidence",
+        "bands"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
         "bands": {
           "description": "Up to 6 RBJ biquads applied in order. The analyzer always writes the plugin layout: low shelf, 4 peaks, high shelf.",
-          "type": "array", "maxItems": 6,
-          "items": {"$ref": "#/$defs/eq_band"}
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/eq_band"
+          }
         }
       }
     },
     "compressor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "threshold_db", "ratio", "attack_ms", "release_ms", "knee_db", "makeup_db"],
+      "required": [
+        "enabled",
+        "confidence",
+        "threshold_db",
+        "ratio",
+        "attack_ms",
+        "release_ms",
+        "knee_db",
+        "makeup_db"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "threshold_db": {"type": "number", "minimum": -60, "maximum": 0},
-        "ratio": {"type": "number", "minimum": 1, "maximum": 20},
-        "attack_ms": {"type": "number", "minimum": 0.1, "maximum": 200},
-        "release_ms": {"type": "number", "minimum": 5, "maximum": 2000},
-        "knee_db": {"type": "number", "minimum": 0, "maximum": 24},
-        "makeup_db": {"type": "number", "minimum": -24, "maximum": 36}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "threshold_db": {
+          "type": "number",
+          "minimum": -60,
+          "maximum": 0
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "attack_ms": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 200
+        },
+        "release_ms": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 2000
+        },
+        "knee_db": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 24
+        },
+        "makeup_db": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 36
+        }
       }
     },
     "saturation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "drive_db", "mix_pct"],
+      "required": [
+        "enabled",
+        "confidence",
+        "drive_db",
+        "mix_pct"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "drive_db": {"type": "number", "minimum": 0, "maximum": 36},
-        "mix_pct": {"type": "number", "minimum": 0, "maximum": 100}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "drive_db": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "mix_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
     "deesser": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "frequency_hz", "threshold_db", "reduction_db"],
+      "required": [
+        "enabled",
+        "confidence",
+        "frequency_hz",
+        "threshold_db",
+        "reduction_db"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "frequency_hz": {"type": "number", "minimum": 2000, "maximum": 16000},
-        "threshold_db": {"type": "number", "minimum": -60, "maximum": 0},
-        "reduction_db": {"type": "number", "minimum": 0, "maximum": 24}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "frequency_hz": {
+          "type": "number",
+          "minimum": 2000,
+          "maximum": 16000
+        },
+        "threshold_db": {
+          "type": "number",
+          "minimum": -60,
+          "maximum": 0
+        },
+        "reduction_db": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 24
+        }
       }
     },
     "delay": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "time_ms", "feedback_pct", "mix_pct", "highcut_hz"],
+      "required": [
+        "enabled",
+        "confidence",
+        "time_ms",
+        "feedback_pct",
+        "mix_pct",
+        "highcut_hz"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "time_ms": {"type": "number", "minimum": 1, "maximum": 2000},
-        "feedback_pct": {"type": "number", "minimum": 0, "maximum": 95},
-        "mix_pct": {"type": "number", "minimum": 0, "maximum": 100},
-        "highcut_hz": {"type": "number", "minimum": 500, "maximum": 20000},
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "time_ms": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "feedback_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 95
+        },
+        "mix_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "highcut_hz": {
+          "type": "number",
+          "minimum": 500,
+          "maximum": 20000
+        },
         "sync_note": {
           "description": "Informational: the tempo-synced note value time_ms was snapped to, e.g. \"1/8D\". time_ms is authoritative.",
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^1/(1|2|4|8|16|32)[TD]?$"
         }
       }
@@ -152,25 +425,72 @@
     "reverb": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "decay_s", "predelay_ms", "mix_pct", "damping_hz"],
+      "required": [
+        "enabled",
+        "confidence",
+        "decay_s",
+        "predelay_ms",
+        "mix_pct",
+        "damping_hz"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "decay_s": {"type": "number", "minimum": 0.1, "maximum": 10, "description": "RT60 at low frequencies."},
-        "predelay_ms": {"type": "number", "minimum": 0, "maximum": 250},
-        "mix_pct": {"type": "number", "minimum": 0, "maximum": 100},
-        "damping_hz": {"type": "number", "minimum": 500, "maximum": 20000, "description": "Cut-off of the in-loop high-frequency damping."}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "decay_s": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10,
+          "description": "RT60 at low frequencies."
+        },
+        "predelay_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 250
+        },
+        "mix_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "damping_hz": {
+          "type": "number",
+          "minimum": 500,
+          "maximum": 20000,
+          "description": "Cut-off of the in-loop high-frequency damping."
+        }
       }
     },
     "doubler": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "confidence", "mix_pct", "width_pct"],
+      "required": [
+        "enabled",
+        "confidence",
+        "mix_pct",
+        "width_pct"
+      ],
       "properties": {
-        "enabled": {"$ref": "#/$defs/enabled"},
-        "confidence": {"$ref": "#/$defs/confidence"},
-        "mix_pct": {"type": "number", "minimum": 0, "maximum": 100},
-        "width_pct": {"type": "number", "minimum": 0, "maximum": 200, "description": "Side-signal scale; 100 = unchanged, 0 = mono."}
+        "enabled": {
+          "$ref": "#/$defs/enabled"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "mix_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "width_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 200,
+          "description": "Side-signal scale; 100 = unchanged, 0 = mono."
+        }
       }
     }
   }

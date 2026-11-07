@@ -179,7 +179,7 @@ class RefineResult:
 
 
 def refine(preset: Preset, reference: np.ndarray, dry: np.ndarray, fs: float, max_evals: int = 60,
-           target: Target | None = None) -> RefineResult:
+           target: Target | None = None, on_eval=None) -> RefineResult:
     t0 = time.perf_counter()
     target = target or Target.of(reference, fs)
     x = to_stereo(dry)
@@ -188,6 +188,8 @@ def refine(preset: Preset, reference: np.ndarray, dry: np.ndarray, fs: float, ma
     def score(p: Preset) -> float:
         nonlocal evals
         evals += 1
+        if on_eval is not None:
+            on_eval(min(evals, max_evals))
         return distance(render(p, x, fs).T, target)
 
     best = copy.deepcopy(preset)

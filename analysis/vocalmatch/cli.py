@@ -16,10 +16,16 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
 
     from .separation import SeparationUnavailable, demucs_available, select_sections, separate
 
+    def progress(fraction: float, stage: str, lo: float = 0.0, hi: float = 1.0) -> None:
+        # Machine-readable lines for the plug-in's Analyze button (--progress).
+        if args.progress:
+            print(f"PROGRESS {lo + (hi - lo) * fraction:.3f} {stage}", flush=True)
+
     dry, fs = load_audio(args.dry)
     separation = {}
     use_demucs = args.separate == "yes" or (args.separate == "auto" and demucs_available())
     if use_demucs:
+        progress(0.0, "separating the vocal (Demucs)")
         try:
             vocals_path, rest_path, cached = separate(args.reference)
         except SeparationUnavailable as exc:
@@ -38,7 +44,8 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
             print("note: Demucs is not installed, so --reference is analysed as-is and should be an isolated "
                   "vocal stem (install it with: pip install \"vocalmatch[separation]\").", file=sys.stderr)
     preset = analyze(reference, dry, fs, reference_name=Path(args.reference).name, tempo_bpm=args.tempo,
-                     passes=args.passes, refine_evals=args.refine)
+                     passes=args.passes, refine_evals=args.refine,
+                     progress=lambda f, st: progress(f, st, 0.25 if use_demucs else 0.0, 1.0))
     if separation:
         preset.diagnostics["separation"] = separation
     preset.save(args.out)
@@ -60,6 +67,12 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     print(f"  delay:      {state(dl, f'{dl.time_ms:.1f} ms, feedback {dl.feedback_pct:.0f} %, mix {dl.mix_pct:.0f} %, high-cut {dl.highcut_hz:.0f} Hz')}")
     print(f"  reverb:     {state(r, f'decay {r.decay_s:.2f} s, predelay {r.predelay_ms:.0f} ms, mix {r.mix_pct:.0f} %, damping {r.damping_hz:.0f} Hz')}")
     print(f"  doubler:    {state(w, f'mix {w.mix_pct:.0f} %, width {w.width_pct:.0f} %')}")
+    pc = preset.pitch_correction
+    if pc:
+        tune = (f"{pc['amount_pct']:.0f} % (retune {pc['retune']}, ~{pc['retune_ms']:.0f} ms)" if pc["detected"]
+                else f"none found ({pc['amount_pct']:.0f} %)")
+        print(f"  pitch correction in the reference: {tune}; key {pc['key'] or '?'}, "
+              f"tuning {pc['tuning_offset_cents']:+.0f} cents (not applied: v1 has no pitch correction)")
     if args.render:
         write_audio(args.render, render(preset, dry, fs, tail_s=args.tail), fs)
         print(f"wrote {args.render}")
@@ -131,6 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--refine", type=int, default=60, metavar="N",
                    help="refinement optimizer evaluations after the estimators (about 1 s each; 0 = off; default 60)")
     a.add_argument("--passes", type=int, default=2, help="estimator passes over the chain (default 2)")
+    a.add_argument("--progress", action="store_true", help="print 'PROGRESS <0-1> <stage>' lines (for the plug-in)")
     a.set_defaults(func=_cmd_analyze)
 
     r = sub.add_parser("render", help="process a dry vocal with a preset")

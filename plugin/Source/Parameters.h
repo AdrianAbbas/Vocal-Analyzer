@@ -12,8 +12,10 @@ namespace vm::params
 // 2 = saturation, de-esser, delay, reverb, doubler/width (milestone 3).
 constexpr int kShellVersion = 1;
 constexpr int kMilestone3Version = 2;
+constexpr int kMilestone6Version = 3; // A/B against the dry signal
 
 inline const juce::String matchAmount { "match_amount" };
+inline const juce::String abDry { "ab_dry" }; // on = hear the dry input (A/B)
 
 inline const juce::String inputOn { "input_on" }, inputGain { "input_gain_db" };
 inline const juce::String outputOn { "output_on" }, outputGain { "output_gain_db" };

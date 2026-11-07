@@ -6,7 +6,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Target architectures")
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 endif()
-project(VocalMatch VERSION 0.3.0 LANGUAGES C CXX)
+project(VocalMatch VERSION 0.4.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -50,7 +50,7 @@ juce_add_plugin(VocalMatch
     AU_SANDBOX_SAFE TRUE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 target_sources(VocalMatch PRIVATE
-    Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Parameters.cpp Source/PresetFile.cpp)
+    Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Parameters.cpp Source/PresetFile.cpp Source/Analyzer.cpp)
 target_include_directories(VocalMatch PUBLIC Source)
 target_compile_definitions(VocalMatch PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0

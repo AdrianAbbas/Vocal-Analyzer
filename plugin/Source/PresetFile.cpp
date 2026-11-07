@@ -47,6 +47,22 @@ juce::Result parsePreset (const juce::String& jsonText, PresetValues& out)
         return juce::Result::fail ("the preset has no \"effects\" object");
 
     out.referenceName = root["reference"]["filename"].toString();
+    if (const auto pc = root["pitch_correction"]; pc.isObject())
+    {
+        // Milestone 7: shown, not applied (v1 has no pitch correction).
+        juce::String info;
+        if ((bool) pc["detected"])
+        {
+            info << "pitch-corrected " << juce::roundToInt ((double) pc["amount_pct"]) << " %";
+            if (pc["retune"].isString())
+                info << ", " << pc["retune"].toString() << " retune";
+        }
+        else
+            info << "no pitch correction found";
+        if (pc["key"].isString())
+            info << ", key " << pc["key"].toString();
+        out.pitchInfo = info;
+    }
 
     if (auto* obj = effects.getDynamicObject())
     {

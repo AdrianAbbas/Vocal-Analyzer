@@ -112,6 +112,11 @@ def run_one(item: dict, out_root: Path, refine: int, seconds: float) -> str:
         if k == "eq":
             settings = "; ".join(f"{b.type} {b.freq_hz:.0f} Hz {b.gain_db:+.1f} dB Q{b.q:.2f}" for b in fx.bands if b.enabled)
         lines.append(f"| {k} | {'yes' if fx.enabled else 'no'} | {fx.confidence:.2f} | {settings} |")
+    pc = preset.pitch_correction or {}
+    if pc:
+        lines += ["", f"pitch correction in the reference: {'yes' if pc.get('detected') else 'no'}, amount {pc.get('amount_pct')} %, "
+                      f"retune {pc.get('retune')} (~{pc.get('retune_ms')} ms), key {pc.get('key')}, "
+                      f"tuning {pc.get('tuning_offset_cents')} cents"]
     ref_d = preset.diagnostics.get("refinement", {})
     if ref_d:
         lines += ["", f"refinement distance: {ref_d['distance_before']} -> {ref_d['distance_after']} "
@@ -122,6 +127,7 @@ def run_one(item: dict, out_root: Path, refine: int, seconds: float) -> str:
               "| dynamics (compression) closer? | | |",
               "| space (reverb, delay) closer? | | |",
               "| width / doubling closer? | | |",
+              "| pitch correction: does the reported amount / retune match what you hear? | | |",
               "| artefacts (harsh saturation, lisping de-esser, pumping)? | | |",
               "| overall: would you start from this preset? | | |"]
     (out / "report.md").write_text("\n".join(lines) + "\n")

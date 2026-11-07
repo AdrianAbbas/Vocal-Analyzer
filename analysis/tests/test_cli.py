@@ -41,3 +41,14 @@ def test_synth_command(tmp_path):
 
 def test_selftest_command():
     assert main(["selftest"]) == 0
+
+
+def test_analyze_progress_lines(tmp_path, capsys):
+    dry = synthetic_vocal(seed=15, duration_s=4.0, fs=FS)
+    sf.write(tmp_path / "dry.wav", dry, FS)
+    sf.write(tmp_path / "ref.wav", dry * 0.5, FS)
+    assert main(["analyze", "--reference", str(tmp_path / "ref.wav"), "--dry", str(tmp_path / "dry.wav"),
+                 "--out", str(tmp_path / "p.json"), "--separate", "no", "--refine", "2", "--passes", "1", "--progress"]) == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("PROGRESS ")]
+    fractions = [float(line.split()[1]) for line in lines]
+    assert len(lines) >= 8 and fractions == sorted(fractions) and fractions[-1] == 1.0 and lines[-1].endswith("done")

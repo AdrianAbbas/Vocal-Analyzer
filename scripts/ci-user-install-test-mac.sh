@@ -9,7 +9,8 @@
 #      auval (strict where supported) on arm64 and on x86_64 under Rosetta
 #   4b. pluginval (strictness 5) on the installed AU and VST3, when its binary is given
 #   5. the installed analyzer, from an empty folder: synth -> analyze -> validate; the
-#      preset it wrote is loaded by the plug-in's own processor (VocalMatchRender, optional)
+#      preset it wrote is loaded by the plug-in's own processor (VocalMatchRender, optional),
+#      and the plug-in's Analyze code finds and runs the installed analyzer by itself
 #   6. uninstall-mac.sh --purge leaves nothing behind
 # Usage: scripts/ci-user-install-test-mac.sh <VocalMatch-macOS-Universal.zip> <log dir> [VocalMatchRender] [pluginval]
 set -euo pipefail
@@ -130,6 +131,12 @@ r = 20 * np.log10(np.sqrt(np.mean((a - b) ** 2)) / np.sqrt(np.mean(b ** 2)))
 print(f"analyzer preset: plug-in vs analyzer render residual {r:.1f} dB")
 assert r < -40, r
 PY
+            # The plug-in's Analyze code finds the installed analyzer by itself (no hints) and
+            # runs it as a separate process, then loads its preset.
+            env -u VOCALMATCH_ANALYZER "$render" --analyze ref.wav dry.wav --analyze-out plugin-analyze.json \
+                --analyze-refine 5 --analyze-passes 1 | tee plugin-analyze.txt
+            grep -q "Library/Application Support/VocalMatch/venv/bin/vocalmatch\|.local/bin/vocalmatch" plugin-analyze.txt
+            "$cmd" validate plugin-analyze.json
         fi
     ) 2>&1 | tee "$logs/use.txt" || err "using the installed analyzer failed"
 else

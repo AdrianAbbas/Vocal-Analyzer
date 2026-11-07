@@ -146,6 +146,8 @@ class Preset:
         default_factory=lambda: {"name": "vocalmatch-analysis", "version": __version__}
     )
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    # Observation (milestone 7), not an effect: see estimators/pitch.py. None = not analysed.
+    pitch_correction: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------ JSON
     def to_dict(self) -> dict[str, Any]:
@@ -155,6 +157,8 @@ class Preset:
             "reference": asdict(self.reference),
             "effects": {name: asdict(getattr(self.effects, name)) for name in EFFECT_ORDER},
         }
+        if self.pitch_correction is not None:
+            d["pitch_correction"] = dict(self.pitch_correction)
         if self.diagnostics:
             d["diagnostics"] = self.diagnostics
         return _plain(d)
@@ -180,6 +184,7 @@ class Preset:
             schema_version=version,
             generator=dict(d.get("generator", {})),
             diagnostics=dict(d.get("diagnostics", {})),
+            pitch_correction=dict(d["pitch_correction"]) if d.get("pitch_correction") is not None else None,
         )
 
     def to_json(self, indent: int = 2) -> str:

@@ -19,7 +19,9 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 | 5 (early). JUCE plug-in: AU + VST3, the whole chain, Load preset, Match amount, Python vs C++ check | done |
 | 3. Saturation, de-esser, delay, reverb, doubler/width estimators (+ each effect in the plug-in) | done |
 | 4. Demucs separation + section selection, refinement optimizer, listening-test tool | done (listening itself: yours, see below) |
-| 6–7. In-plugin Analyze, ONNX | – |
+| 6. In-plugin Analyze (separate process), capture of your take, A/B against dry, meters, resizable window | done |
+| 7a. Pitch-correction estimation (how hard the reference is tuned, retune speed, key) | done |
+| 7b. ONNX analysis inside the plug-in | not started: see below |
 
 The plug-in was moved ahead of milestones 3–4 so it can be tried in GarageBand early;
 every effect is in the Python chain and the plug-in alike, checked sample by sample.
@@ -37,7 +39,23 @@ The installer copies `Vocal Match.component` to `~/Library/Audio/Plug-Ins/Compon
 `Vocal Match.vst3` to `~/Library/Audio/Plug-Ins/VST3`, removes the browser's quarantine flag,
 signs both ad hoc, resets the Audio Unit registry, runs `auval`, then installs the analyzer
 (below). In GarageBand: Smart Controls (B) > Plug-ins > an empty slot > Audio Units >
-Windward Audio > Vocal Match, then **Load preset...**.
+Windward Audio > Vocal Match. Then either **Analyze** in the plug-in (below) or **Load preset...**
+with a preset made in Terminal.
+
+### Analyze inside the plug-in
+
+1. **Reference song...**: the song whose vocal sound you want (a full song needs Demucs:
+   `bash install.sh --with-separation`; otherwise a vocal stem).
+2. **Capture**, then play your vocal track: the plug-in records its input (your dry take, up to
+   5 minutes; Shift-click starts over). Or pick *Dry vocal: a file...*.
+3. **Analyze**: the analyzer runs as a separate program (progress bar, Cancel); its preset loads
+   when it is done and is kept in `~/Music/Vocal Match/Presets`.
+
+GarageBand runs plug-ins in a sandbox, which may not allow starting another program. Then Analyze
+says so and copies the exact Terminal command; run it, then **Load preset...**. Logic Pro and most
+other hosts allow it. **A/B: dry** switches to your untouched input (20 ms crossfade; the effects keep
+running), **Reset to estimates** undoes your edits, double-click a knob to return it to its estimate,
+and the compressor and de-esser show their gain reduction. The window can be resized (60–150 %).
 
 ## Install the analyzer alone (Linux, or macOS without the plug-in)
 
@@ -177,6 +195,19 @@ distance drops by 3 % and 0.1. A result is kept only if it lowers the distance.
 with its SHA-256. Sections (cut at silences) are kept when mostly voiced and the vocal stem is not mostly
 bleed (median vocal-to-accompaniment ratio ≥ −15 dB), each with up to 2 s of the silence after it (tails).
 
+**Pitch correction** (`estimators/pitch.py`, milestone 7): a YIN pitch track of both vocals, split into
+notes. A corrector takes away the singer's own intonation: how far notes land from the semitone grid and
+how much they move (vibrato, drift) around their centre. The *amount* is how much of the dry vocal's
+intonation the reference lacks (your singing is the baseline), the *retune* speed comes from how fast the
+reference settles onto each note (fast / medium / slow relative to you, and an approximate time), plus
+the key and tuning offset. It is written to `preset.json` as `pitch_correction` and shown in the plug-in;
+nothing is applied (the spec keeps pitch correction out of v1): set your own tuner to match.
+
+**ONNX analysis inside the plug-in (7b)** is not started. It means exporting Demucs to ONNX and porting the
+whole analyzer (eight estimators and the optimizer) to C++ with ONNX Runtime in the plug-in: a large
+project. Its main benefit would be hosts whose sandbox stops the plug-in from starting the analyzer (see
+"Analyze inside the plug-in"); try Analyze in your GarageBand first, since that decides whether it is needed.
+
 ## Listening tests (real songs)
 
 Put your songs and dry takes in `tests/audio/private/` (git-ignored), list them in
@@ -202,6 +233,8 @@ the automated measure.
 - Mild saturation (a few dB of drive) is hard to tell from compressor detail; it is only switched on when
   the whole chain clearly matches better with it.
 - The compressor knee is fixed at 6 dB during estimation.
+- Pitch correction: the amount is relative to your own singing; the retune time is approximate (within a
+  factor of 2: the tracker's 40 ms window blurs note onsets), the fast / medium / slow class more reliable.
 - Analysis takes one to a few minutes (Python); the refinement budget (`--refine`) is most of it.
 - Windows: the analyzer's tests run on Windows; the plug-in is built for macOS (AU + VST3) and Linux (VST3,
   for the parity check), not yet for Windows.

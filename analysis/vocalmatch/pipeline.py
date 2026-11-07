@@ -101,6 +101,7 @@ def analyze(
     passes: int = 2,
     refine_evals: int = 0,
     max_seconds: float | None = 45.0,
+    progress=None,
 ) -> Preset:
     """*refine_evals* > 0 runs the refinement optimizer (refine.py) after the estimators,
     with that many full-chain evaluations (about 1 s each for 12 s of audio). Signals longer
@@ -127,14 +128,28 @@ def analyze(
     timings: dict[str, float] = {}
     diag: dict[str, dict] = {}
 
+    # Progress (for the plug-in's Analyze button): relative stage costs, measured on 12 s.
+    cost = {"delay": 7.0, "reverb": 36.0, "doubler": 1.5, "eq": 3.0, "compressor": 25.0, "saturation": 15.0, "deesser": 20.0}
+    total = cost["delay"] + passes * (sum(cost.values()) - cost["delay"]) + 0.8 * max(refine_evals, 0)
+    done = 0.0
+
+    def report(stage: str, fraction: float) -> None:
+        if progress is not None:
+            progress(min(max(fraction, 0.0), 1.0), stage)
+
     def timed(name, fn, *args, **kwargs):
+        nonlocal done
+        report(f"{name} (pass {current_pass + 1} of {passes})", done / total)
         t0 = time.perf_counter()
         out = fn(*args, **kwargs)
         timings[name] = round(timings.get(name, 0.0) + time.perf_counter() - t0, 2)
         diag[name] = out.diagnostics
+        done += cost[name]
         return out
 
+    current_pass = 0
     for k in range(passes):
+        current_pass = k
         # 1. Time-based effects. (The delay's time and echo shape barely depend on the rest;
         #    the first estimate is kept.)
         if k == 0:
@@ -171,14 +186,30 @@ def analyze(
         e.saturation.enabled = False
         e.deesser = timed("deesser", estimate_deesser, ref, chain.upto(x, "deesser"), fs, post=post).deesser
 
+    # Pitch correction of the reference (an observation, milestone 7).
+    try:
+        from .estimators.pitch import estimate_pitch_correction
+
+        pc = estimate_pitch_correction(ref, x, fs)
+        preset.pitch_correction = pc.to_dict()
+        diag["pitch_correction"] = pc.diagnostics
+    except Exception as exc:  # noqa: BLE001 - an observation must never fail the analysis
+        diag["pitch_correction"] = {"error": str(exc)}
+
     if refine_evals > 0:
         from .refine import refine
 
-        res = refine(preset, ref, x, fs, max_evals=refine_evals)
+        start = done / total
+
+        def on_eval(n: int) -> None:
+            report(f"refinement ({n} of {refine_evals})", start + (1.0 - start) * n / refine_evals)
+
+        res = refine(preset, ref, x, fs, max_evals=refine_evals, on_eval=on_eval)
         preset.effects = res.preset.effects
         diag["refinement"] = res.diagnostics
         timings["refinement"] = round(res.seconds, 2)
     _round_settings(preset)
+    report("done", 1.0)
     preset.diagnostics = {**diag, "passes": passes, "seconds": timings}
     return preset
 

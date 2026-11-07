@@ -287,6 +287,14 @@ public:
     }
 
     const ChainParams& getParams() const noexcept { return params; }
+
+    // Current gain reduction in dB (meters): the compressor's and the de-esser's smoothed
+    // reduction, 0 when the effect is off.
+    double compressorReductionDb() const noexcept { return params.compressor.enabled ? compSmoother.s : 0.0; }
+    double deesserReductionDb() const noexcept
+    {
+        return params.deesser.enabled && params.deesser.reductionDb > 0.0 ? deessSmoother.s : 0.0;
+    }
     double getSampleRate() const noexcept { return fs; }
 
     // Stereo in place. Any length: processed in chunks of the prepared block size.

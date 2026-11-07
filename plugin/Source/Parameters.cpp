@@ -38,6 +38,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
     layout.add (std::make_unique<APF> (pid (matchAmount), "Match amount", range (0.0f, 100.0f), 100.0f, attrs ("%", 0)));
+    layout.add (std::make_unique<APB> (pid (abDry, kMilestone6Version), "A/B: dry", false));
 
     auto input = group ("input", "Input gain");
     input->addChild (std::make_unique<APB> (pid (inputOn), "Input gain on", true));

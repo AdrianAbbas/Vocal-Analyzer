@@ -43,7 +43,11 @@ GARAGEBAND
   Settings > Audio/MIDI: tick "Audio Units". Restart GarageBand.
   Select your vocal track. Smart Controls (B) > Plug-ins > an empty slot >
   Audio Units > Windward Audio > Vocal Match.
-  Click "Load preset..." and choose preset.json (or drop it on the window).
+  Either ANALYZE in the plug-in: Reference song..., then Capture and play your vocal
+  track (the plug-in records your take), then Analyze. Or click "Load preset..." and
+  choose a preset.json made in Terminal (or drop it on the window).
+  GarageBand may not let a plug-in start the analyzer (its sandbox): Analyze then
+  copies the Terminal command for you; run it there, then Load preset.
   If you see sliders instead of the Vocal Match window, switch the plug-in
   window's view menu from "Controls" to "Editor".
 
@@ -58,6 +62,10 @@ THE WINDOW
   MATCH AMOUNT   0-100 %: scales every effect's departure from neutral
                  (0 % = your dry vocal, 100 % = the full estimate).
   ON             each effect's bypass switch.
+  A/B: DRY       your untouched input (the effects keep running behind it).
+  RESET TO ESTIMATES  undoes your edits; double-click a knob for its estimate alone.
+  ANALYZE        reference song + your dry take (Capture, or a file) -> preset.
+  The window can be resized (drag the lower-right corner).
   Every setting is a normal automatable parameter and is saved with the song.
 
 UPDATE

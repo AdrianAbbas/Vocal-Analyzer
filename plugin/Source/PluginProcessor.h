@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Analyzer.h"
+#include "Capture.h"
 #include "DSP/Chain.h"
 #include "Parameters.h"
 #include "PresetFile.h"
@@ -40,30 +42,52 @@ public:
 
     // ---- preset.json (message thread) ------------------------------------------------
     // Sets every parameter the file holds (as automatable gestures, so the host records
-    // them) and remembers the estimates for the editor. Returns a one-line status.
+    // them) and remembers the estimates for the editor.
     juce::Result loadPresetFile (const juce::File& file);
     juce::Result loadPresetText (const juce::String& json, const juce::String& displayName);
+    // Sets every parameter back to the loaded preset's estimates (Match amount and A/B stay).
+    bool resetToEstimates();
 
-    // The last loaded preset: its name, a status line, and estimated value / confidence.
     juce::String getPresetName() const { return presetName; }
     juce::String getPresetStatus() const { return presetStatus; }
     std::optional<float> getEstimate (const juce::String& paramId) const;
     std::optional<float> getConfidence (const juce::String& effectKey) const;
-    // Increments whenever a preset is loaded or restored (the editor polls it).
-    int getPresetGeneration() const { return presetGeneration; }
+    int getPresetGeneration() const { return presetGeneration; } // bumps on load / restore
 
     void setParameterValue (const juce::String& paramId, float realValue);
+
+    // ---- Analyze (milestone 6, message thread) ----------------------------------------
+    vm::Capture capture;              // the plug-in's input, recorded while the host plays
+    vm::AnalyzerRun analyzer;         // the analyzer as a separate process
+    juce::File referenceFile, dryFile; // the user's choices (saved with the song)
+    bool useCapturedDry = true;
+    // Builds the request (writing the captured take to a WAV when it is used).
+    juce::Result makeAnalyzeRequest (vm::AnalyzeRequest& out);
+    void setCaptureArmed (bool armed) { capture.setArmed (armed); }
+
+    // ---- meters (written by the audio thread, read by the editor) ----------------------
+    std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
+    std::atomic<float> compressorReductionDb { 0.0f }, deesserReductionDb { 0.0f };
 
     juce::AudioProcessorValueTreeState apvts;
 
 private:
     template <typename Sample>
     void process (juce::AudioBuffer<Sample>& buffer);
+    template <typename Sample>
+    void processChunk (Sample* left, Sample* right, int n, bool monoOut);
+    bool hostIsPlaying();
     void rememberPreset (const vm::PresetValues&, const juce::String& json, const juce::String& name);
     juce::String describe (const vm::PresetValues&) const;
 
     vm::params::Reader reader;
     vm::Chain chain;
+    std::atomic<float>* abParam = nullptr;
+
+    // A/B: the dry input, kept per chunk, crossfaded with the processed signal over 20 ms.
+    static constexpr int kChunk = 1024;
+    std::array<std::array<double, kChunk>, 2> dryChunk {};
+    double abGain = 0.0, abStep = 0.0;
 
     juce::String presetName, presetStatus, presetJson;
     vm::PresetValues estimates;

@@ -5,6 +5,9 @@
 //   VocalMatchRender --preset preset.json --in dry.wav --out out.wav
 //                    [--match 100] [--tail 0] [--block 512] [--param id=value ...]
 //   VocalMatchRender [--preset preset.json] --snapshot editor.png   (the editor as an image)
+//   VocalMatchRender --analyze ref.wav dry.wav [--analyze-out p.json] [--analyze-refine N] [--analyze-passes N]
+//                    (the plug-in's Analyze: runs the installed analyzer, loads its preset)
+//   ... --capture take.wav   (arms the plug-in's capture while rendering, writes the take)
 //
 // The preset goes through the plug-in's "Load preset" code (loadPresetFile), then each
 // --param sets one parameter in real units. Output: 32-bit float WAV, stereo.
@@ -32,7 +35,8 @@ int main (int argc, char* argv[])
     int block = 512;
     juce::StringArray extraParams;
     bool listParams = false;
-    juce::File snapshotFile;
+    juce::File snapshotFile, analyzeRef, analyzeDry, analyzeOut, captureFile;
+    int analyzeRefine = 60, analyzePasses = 2;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -46,6 +50,15 @@ int main (int argc, char* argv[])
         else if (arg == "--block") block = next().getIntValue();
         else if (arg == "--param") extraParams.add (next());
         else if (arg == "--list-params") listParams = true;
+        else if (arg == "--analyze")
+        {
+            analyzeRef = juce::File::getCurrentWorkingDirectory().getChildFile (next());
+            analyzeDry = juce::File::getCurrentWorkingDirectory().getChildFile (next());
+        }
+        else if (arg == "--analyze-out") analyzeOut = juce::File::getCurrentWorkingDirectory().getChildFile (next());
+        else if (arg == "--analyze-refine") analyzeRefine = next().getIntValue();
+        else if (arg == "--analyze-passes") analyzePasses = next().getIntValue();
+        else if (arg == "--capture") captureFile = juce::File::getCurrentWorkingDirectory().getChildFile (next());
         else if (arg == "--snapshot") snapshotFile = juce::File::getCurrentWorkingDirectory().getChildFile (next());
         else return fail ("unknown argument " + arg);
     }
@@ -57,6 +70,39 @@ int main (int argc, char* argv[])
             if (auto* withId = dynamic_cast<juce::AudioProcessorParameterWithID*> (p))
                 std::cout << withId->getParameterID() << "\t" << p->getName (64) << "\t" << p->getText (p->getDefaultValue(), 32) << "\n";
         return 0;
+    }
+    if (analyzeRef != juce::File())
+    {
+        // The plug-in's Analyze button, without the button: the same AnalyzerRun, then the
+        // same preset loading.
+        processor.referenceFile = analyzeRef;
+        processor.dryFile = analyzeDry;
+        processor.useCapturedDry = false;
+        vm::AnalyzeRequest request;
+        if (auto r = processor.makeAnalyzeRequest (request); r.failed())
+            return fail ("analyze: " + r.getErrorMessage());
+        if (analyzeOut != juce::File())
+            request.outPreset = analyzeOut;
+        request.refineEvals = analyzeRefine;
+        request.passes = analyzePasses;
+        request.separate = "no";
+        std::cout << "analyzer: " << vm::findAnalyzer().getFullPathName() << "\n";
+        if (! processor.analyzer.start (request))
+            return fail ("analyze: " + processor.analyzer.getError());
+        juce::String lastStage;
+        while (! processor.analyzer.waitUntilDone (200))
+            if (const auto st = processor.analyzer.getStage(); st != lastStage)
+            {
+                std::cout << "  " << juce::String (processor.analyzer.getProgress(), 3) << " " << st << "\n";
+                lastStage = st;
+            }
+        if (processor.analyzer.getState() != vm::AnalyzerRun::State::finished)
+            return fail ("analyze: " + processor.analyzer.getError() + "\n" + processor.analyzer.getLog());
+        if (auto r = processor.loadPresetFile (processor.analyzer.getPresetFile()); r.failed())
+            return fail ("analyze: " + r.getErrorMessage());
+        std::cout << "analyzed: " << processor.analyzer.getPresetFile().getFullPathName() << "\n";
+        if (inFile == juce::File() && snapshotFile == juce::File())
+            return 0;
     }
     if (inFile == juce::File() && snapshotFile == juce::File())
         return fail ("usage: --in dry.wav --out out.wav [--preset preset.json] [--match pct] [--tail s] [--block n] [--param id=value]");
@@ -107,6 +153,8 @@ int main (int argc, char* argv[])
 
     processor.setPlayConfigDetails (2, 2, fs, block);
     processor.prepareToPlay (fs, block);
+    if (captureFile != juce::File())
+        processor.setCaptureArmed (true); // no play head here: everything is captured
     juce::MidiBuffer midi;
     for (int start = 0; start < length; start += block)
     {
@@ -116,6 +164,13 @@ int main (int argc, char* argv[])
         processor.processBlock (view, midi);
     }
     processor.releaseResources();
+    if (captureFile != juce::File())
+    {
+        processor.setCaptureArmed (false);
+        if (! processor.capture.writeWav (captureFile))
+            return fail ("cannot write the captured take to " + captureFile.getFullPathName());
+        std::cout << "captured " << processor.capture.seconds() << " s to " << captureFile.getFullPathName() << "\n";
+    }
 
     outFile.deleteFile();
     juce::WavAudioFormat wav;
