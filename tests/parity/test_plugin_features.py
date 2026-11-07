@@ -104,3 +104,43 @@ def test_missing_analyzer_is_reported(binary, tmp_path):
     if "not installed" not in r.stderr:  # a system-wide copy (e.g. /usr/local/bin) may exist on this machine
         pytest.skip("an analyzer is installed system-wide here")
     assert r.returncode != 0
+
+
+def _require_analyzer():
+    exe = analyzer_command()
+    if exe is None:
+        if os.environ.get("VOCALMATCH_REQUIRE_CPP") == "1":
+            pytest.fail("the vocalmatch command is not installed")
+        pytest.skip("the vocalmatch command is not installed")
+    return exe
+
+
+def test_find_singers_and_analyze_one_through_the_plugin(binary, tmp_path):
+    """Find singers, then Analyze singer B within a region with one preset per singer, as the
+    Analyze panel runs them (the scan is read back by the plug-in's own code)."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+    from duet_cases import synthetic_duet
+
+    exe = _require_analyzer()
+    d = synthetic_duet()
+    song = tmp_path / "duet.wav"
+    sf.write(str(song), d.mix.T, FS, subtype="FLOAT")
+    sf.write(str(tmp_path / "dry.wav"), d.dry["B"][: 20 * FS], FS, subtype="FLOAT")
+    env = {**os.environ, "VOCALMATCH_ANALYZER": exe, "HOME": str(tmp_path)}
+    r = subprocess.run([str(binary), "--find-singers", str(song)], capture_output=True, text=True, timeout=900, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "singer A" in r.stdout and "singer B" in r.stdout and "2 singers found" in r.stdout, r.stdout
+    preset = tmp_path / "duet-B.json"
+    r = subprocess.run([str(binary), "--analyze", str(song), str(tmp_path / "dry.wav"), "--analyze-out", str(preset),
+                        "--analyze-refine", "0", "--analyze-passes", "1", "--analyze-singers", "B",
+                        "--analyze-regions", "9-36", "--analyze-per-singer"],
+                       capture_output=True, text=True, timeout=1800, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "--regions 9.00-36.00 --singer B --per-singer" in r.stdout
+    sel = json.loads(preset.read_text())["reference"]["selection"]
+    assert sel["singers"] == ["B"] and sel["regions"] == [[9.0, 36.0]]
+    assert 8.0 < sel["analysed_s"] < 18.0  # B's two sections inside 9-36 s
+    assert (tmp_path / "duet-B - Singer B.json").is_file()

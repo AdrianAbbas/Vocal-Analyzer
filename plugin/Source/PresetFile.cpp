@@ -47,6 +47,29 @@ juce::Result parsePreset (const juce::String& jsonText, PresetValues& out)
         return juce::Result::fail ("the preset has no \"effects\" object");
 
     out.referenceName = root["reference"]["filename"].toString();
+    if (const auto sel = root["reference"]["selection"]; sel.isObject())
+    {
+        // "Singer A, 22.7 s analysed (overlap excluded 3.6 s, singer confidence 99 %)"
+        juce::String info;
+        if (const auto* singers = sel["singers"].getArray(); singers != nullptr && ! singers->isEmpty())
+        {
+            juce::StringArray ids;
+            for (const auto& v : *singers)
+                ids.add (v.toString());
+            info << (ids.size() > 1 ? "Singers " : "Singer ") << ids.joinIntoString (" + ") << ", ";
+        }
+        else if (const auto* regions = sel["regions"].getArray(); regions != nullptr && ! regions->isEmpty())
+            info << regions->size() << (regions->size() > 1 ? " regions, " : " region, ");
+        info << juce::String ((double) sel["analysed_s"], 1) << " s analysed";
+        juce::StringArray extra;
+        if (sel.hasProperty ("overlap_excluded_s"))
+            extra.add ("overlap excluded " + juce::String ((double) sel["overlap_excluded_s"], 1) + " s");
+        if (sel.hasProperty ("singer_confidence"))
+            extra.add ("singer confidence " + juce::String (juce::roundToInt ((double) sel["singer_confidence"] * 100.0)) + " %");
+        if (! extra.isEmpty())
+            info << " (" << extra.joinIntoString (", ") << ")";
+        out.selectionInfo = info;
+    }
     if (const auto pc = root["pitch_correction"]; pc.isObject())
     {
         // Milestone 7: shown, not applied (v1 has no pitch correction).

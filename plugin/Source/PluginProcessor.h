@@ -5,6 +5,8 @@
 #include "DSP/Chain.h"
 #include "Parameters.h"
 #include "PresetFile.h"
+#include "Preview.h"
+#include "SingerScan.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -12,7 +14,7 @@ class VocalMatchProcessor final : public juce::AudioProcessor
 {
 public:
     VocalMatchProcessor();
-    ~VocalMatchProcessor() override = default;
+    ~VocalMatchProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -65,6 +67,36 @@ public:
     juce::Result makeAnalyzeRequest (vm::AnalyzeRequest& out);
     void setCaptureArmed (bool armed) { capture.setArmed (armed); }
 
+    // ---- the reference song: waveform, preview, singers (message thread) ---------------
+    struct Peaks
+    {
+        std::vector<float> lo, hi; // per bucket, mono mix
+        double seconds = 0.0;
+    };
+    // Decodes referenceFile on a background thread (waveform + preview); pollSong() picks it up.
+    void loadReferenceSong();
+    void pollSong(); // editor timer: hands a finished decode to the preview, bumps the generation
+    const Peaks& getPeaks() const { return peaks; }
+    int getSongGeneration() const { return songGeneration; }
+    juce::String getSongError() const { return songError; }
+    bool isSongLoading() const { return songLoading; }
+    vm::PreviewPlayer preview;
+
+    vm::AnalyzerRun scanner; // `vocalmatch singers` for the reference
+    const vm::SingerScan& getScan() const { return scan; }
+    int getScanGeneration() const { return scanGeneration; }
+    bool loadScanFile (const juce::File&); // false if it is not a scan of the current reference
+    void clearScan();
+    juce::File scanFileFor (const juce::File& song) const; // ~/Music/Vocal Match/Scans/<song>.singers.json
+
+    juce::Array<juce::Range<double>> regions; // marked by hand; empty = the whole song
+    juce::StringArray chosenSingers;          // ticked in the Analyze panel
+    bool perSingerPresets = false;
+
+    // ---- editor state (saved with the song) ----------------------------------------------
+    int editorWidth = 1040, editorHeight = 660, editorPage = 0;
+    juce::StringArray collapsedCards;
+
     // ---- meters (written by the audio thread, read by the editor) ----------------------
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
     std::atomic<float> compressorReductionDb { 0.0f }, deesserReductionDb { 0.0f };
@@ -89,9 +121,28 @@ private:
     std::array<std::array<double, kChunk>, 2> dryChunk {};
     double abGain = 0.0, abStep = 0.0;
 
+    struct Decoded
+    {
+        std::unique_ptr<vm::Song> song;
+        Peaks peaks;
+        juce::String error;
+        juce::File file;
+    };
+    std::mutex decodedLock;
+    std::unique_ptr<Decoded> decoded; // a finished decode waiting for pollSong()
+    Peaks peaks;
+    juce::String songError;
+    bool songLoading = false;
+    int songGeneration = 0;
+    vm::SingerScan scan;
+    juce::String scanJson;
+    int scanGeneration = 0;
+    double currentRate = 44100.0;
+
     juce::String presetName, presetStatus, presetJson;
     vm::PresetValues estimates;
     int presetGeneration = 0;
+    juce::ThreadPool songPool { 1 }; // last: its jobs write the members above
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalMatchProcessor)
 };

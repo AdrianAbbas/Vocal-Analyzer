@@ -115,6 +115,7 @@ class Selection:
     kept_s: float
     total_s: float
     sections: list = field(default_factory=list)  # (start_s, end_s, kept, snr_db, voiced)
+    mask: np.ndarray | None = None  # (n,) per sample of the stem: kept
 
     @property
     def diagnostics(self) -> dict:
@@ -156,6 +157,7 @@ def select_sections(vocals: np.ndarray, accompaniment: np.ndarray | None, fs: fl
         bounds.append((start, n, n))
 
     pieces, sections, kept = [], [], 0
+    mask = np.zeros(len(v2), bool)
     for s, e, gap_end in bounds:
         act = ~silent[s:e]
         snr = float(np.median((lv[s:e] - la[:n][s:e])[act])) if la is not None and act.any() else 0.0
@@ -165,7 +167,8 @@ def select_sections(vocals: np.ndarray, accompaniment: np.ndarray | None, fs: fl
         if keep:
             a, b = s * hop, min(gap_end * hop, e * hop + int(MAX_TAIL_S * fs), len(v2))
             pieces.append(v2[a:b])
+            mask[a:b] = True
             kept += b - a
     if not pieces:  # nothing passes: analyse everything rather than nothing
-        return Selection(v2, len(v2) / fs, len(v2) / fs, sections)
-    return Selection(np.concatenate(pieces), kept / fs, len(v2) / fs, sections)
+        return Selection(v2, len(v2) / fs, len(v2) / fs, sections, np.ones(len(v2), bool))
+    return Selection(np.concatenate(pieces), kept / fs, len(v2) / fs, sections, mask)

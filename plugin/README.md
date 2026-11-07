@@ -24,7 +24,9 @@ Tools/           VocalMatchRender: the processor offline (Python-vs-C++ check), 
   (`Source/Capture.h`: allocated on the message thread, written lock-free). Sandboxed hosts (GarageBand)
   may refuse to start it: the plug-in then copies the Terminal command.
 - **A/B: dry** (`ab_dry` parameter): the untouched input, crossfaded over 20 ms; the chain keeps running.
-  Gain-reduction and level meters; the window scales 60–150 %.
+  Gain-reduction and level meters. The window opens at 1040 x 660 and resizes from 900 x 580 to
+  2080 x 1320 (layout scales uniformly; the size is saved with the song). Analyze | Chain pages;
+  the Analyze page has the waveform, region selection, singer separation and preview.
 - **Match amount** scales every effect's departure from neutral (CHAIN.md); **On** is each effect's bypass.
 - Real-time safe: the audio thread reads parameter atomics and recomputes coefficients only on
   change; buffers are allocated in `prepareToPlay`. No look-ahead, latency 0.

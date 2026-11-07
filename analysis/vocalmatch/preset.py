@@ -135,6 +135,8 @@ class Reference:
     sample_rate_hz: int = 48000
     tempo_bpm: float | None = None
     duration_s: float | None = None
+    # What was analysed when not all of it (regions, singers): see selection.py.
+    selection: dict[str, Any] | None = None
 
 
 @dataclass
@@ -154,7 +156,7 @@ class Preset:
         d = {
             "schema_version": self.schema_version,
             "generator": dict(self.generator),
-            "reference": asdict(self.reference),
+            "reference": {k: v for k, v in asdict(self.reference).items() if not (k == "selection" and v is None)},
             "effects": {name: asdict(getattr(self.effects, name)) for name in EFFECT_ORDER},
         }
         if self.pitch_correction is not None:

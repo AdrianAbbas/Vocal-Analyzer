@@ -22,6 +22,7 @@ own vocal is processed the same way. Full spec: [`SPEC.md`](SPEC.md).
 | 6. In-plugin Analyze (separate process), capture of your take, A/B against dry, meters, resizable window | done |
 | 7a. Pitch-correction estimation (how hard the reference is tuned, retune speed, key) | done |
 | 7b. ONNX analysis inside the plug-in | not started: see below |
+| Songs with more than one singer: region selection, singer separation, a preset per singer; compact resizable window | done |
 
 The plug-in was moved ahead of milestones 3–4 so it can be tried in GarageBand early;
 every effect is in the Python chain and the plug-in alike, checked sample by sample.
@@ -55,7 +56,50 @@ GarageBand runs plug-ins in a sandbox, which may not allow starting another prog
 says so and copies the exact Terminal command; run it, then **Load preset...**. Logic Pro and most
 other hosts allow it. **A/B: dry** switches to your untouched input (20 ms crossfade; the effects keep
 running), **Reset to estimates** undoes your edits, double-click a knob to return it to its estimate,
-and the compressor and de-esser show their gain reduction. The window can be resized (60–150 %).
+and the compressor and de-esser show their gain reduction.
+
+**The window** opens at 1040 × 660 points (fits a 13" laptop with the menu bar and Dock) and
+resizes from 900 × 580 to 2080 × 1320 with the host's resize corner or the plug-in's own; the
+size is saved with the song. The header is always visible: **Analyze | Chain** tabs, Load preset,
+Reset, A/B, the status line, IN/OUT meters and **Match** amount. **Chain** shows every effect as a
+card (click a card's title to fold it; the others grow). Each knob has its value below it: click
+the value to type one.
+
+### Songs with more than one singer
+
+On a duet the vocal stem holds every singer, so analysing all of it averages their processing.
+On the **Analyze** page:
+
+- **Regions**: drag on the song's waveform to mark the sections to analyse (several allowed).
+  Drag a region's edge to change it, right-click (or Alt-click) to remove it, double-click or
+  **Play** to hear it. Only the marked sections are analysed.
+- **Find singers** separates the singers automatically: they get a colour each on the singer lane
+  under the waveform (hatched: where they sing at once). **Preview** plays a few seconds of each;
+  tick who to match. Sections where singers overlap are always left out (the panel says how much).
+  When the detection is unsure it says so: mark the sections with regions instead.
+- Tick several singers to analyse them together, or tick **One preset per singer** to get a
+  preset each (`<name> - Singer A.json`, ...; the first one loads). The status line shows what
+  each preset was made from: singer, seconds analysed, overlap excluded, singer confidence.
+
+Preview plays the reference through this track's output: the track must be playing or monitored
+for the host to run the plug-in. From Terminal:
+
+```bash
+vocalmatch singers --reference song.wav --json song.singers.json
+```
+
+```bash
+vocalmatch analyze --reference song.wav --dry my_vocal.wav --out preset.json --singer A
+```
+
+```bash
+vocalmatch analyze --reference song.wav --dry my_vocal.wav --out preset.json --regions 0:12-0:41,1:30-2:05
+```
+
+`--singer A,B` analyses both together; `--singer all --per-singer` writes one preset per singer.
+`--regions` and `--singer` combine (that singer, within the regions). How the singer separation
+works: `analysis/vocalmatch/singers.py` (own DSP code, no pretrained model; licences in
+[`docs/LICENSES.md`](docs/LICENSES.md)).
 
 ## Install the analyzer alone (Linux, or macOS without the plug-in)
 
@@ -128,6 +172,14 @@ runs the estimators on the result, and checks that they recover the settings:
 | Saturation | drive ±3 dB, mix ±10 |
 | De-esser | frequency ±15 %, threshold ±3 dB, reduction ±2 dB |
 | Whole chain (all eight effects at once, with refinement) | refinement lowers the distance by 30 %; EQ ±2.5 dB per band; compressor threshold ±2 dB, make-up ±1.5 dB, ratio ±30 %; delay time ±1 ms, mix ±3; reverb decay ±25 %, mix ±4; doubler mix ±5, width ±15; de-esser found |
+| Duet (two singers, two chains; `test_duet_roundtrip.py`) | each singer's EQ and compressor within the EQ / compressor tolerances above, chosen by singer separation and by regions; both choices agree |
+
+The duet is synthetic (`tests/roundtrip/duet_cases.py`): two different synthetic singers (the second
+an octave higher, with shorter vocal tract, faster vibrato, more breath), each through its own chain
+(presence EQ + 4:1, telephone EQ + 6:1), in alternating sections and one section where both sing.
+Real songs never go in the repository: put them in `tests/audio/private/` (git-ignored).
+`tests/parity/test_editor.py` checks the window's layout at sizes from 900 × 580 to 2080 × 1320
+(nothing outside its parent or overlapping, on both pages), that the size is saved, and the preview.
 
 The milestone-3 cases put each effect behind a realistic EQ + compressor (`tests/roundtrip/cases.py`).
 The milestone-3 and whole-chain round trips take minutes (`-m slow`); CI runs them on one Linux job.
@@ -235,6 +287,10 @@ the automated measure.
 - The compressor knee is fixed at 6 dB during estimation.
 - Pitch correction: the amount is relative to your own singing; the retune time is approximate (within a
   factor of 2: the tracker's 40 ms window blurs note onsets), the fast / medium / slow class more reliable.
+- Singer separation uses pitch range, timbre and level dynamics per phrase, and that singers take
+  turns. It separates clearly different voices (e.g. a low and a high voice) and singers with
+  different processing; two similar voices singing line by line can stay one singer (it says it is
+  unsure): use regions then. Harmonies an octave apart are not found as overlap.
 - Analysis takes one to a few minutes (Python); the refinement budget (`--refine`) is most of it.
 - Windows: the analyzer's tests run on Windows; the plug-in is built for macOS (AU + VST3) and Linux (VST3,
   for the parity check), not yet for Windows.

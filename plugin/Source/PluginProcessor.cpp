@@ -14,6 +14,8 @@ VocalMatchProcessor::VocalMatchProcessor()
     capture.prepare (44100.0);
 }
 
+VocalMatchProcessor::~VocalMatchProcessor() { songPool.removeAllJobs (true, 20000); }
+
 bool VocalMatchProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     // mono -> mono, mono -> stereo and stereo -> stereo. The chain is stereo inside:
@@ -31,6 +33,7 @@ void VocalMatchProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     chain.setParams (reader.read());
     chain.reset();
     capture.prepare (sampleRate);
+    currentRate = sampleRate;
     abGain = abParam->load() >= 0.5f ? 1.0 : 0.0; // no fade at start
     abStep = 1.0 / (0.02 * sampleRate);           // 20 ms A/B crossfade
     setLatencySamples (0);                        // nothing in the chain looks ahead
@@ -99,6 +102,8 @@ void VocalMatchProcessor::process (juce::AudioBuffer<Sample>& buffer)
         else
             processChunk (buffer.getWritePointer (0, start), (Sample*) nullptr, m, true);
     }
+    // The reference song's preview (Analyze panel), mixed in after the chain.
+    preview.process (buffer.getWritePointer (0), numOut >= 2 ? buffer.getWritePointer (1) : (Sample*) nullptr, n, currentRate);
     // The editor takes the maximum since its last look and resets it (meters).
     outputPeak = juce::jmax (outputPeak.load(), (float) buffer.getMagnitude (0, n));
     compressorReductionDb = (float) chain.compressorReductionDb();
@@ -159,6 +164,8 @@ juce::String VocalMatchProcessor::describe (const vm::PresetValues& v) const
     juce::String s = presetName;
     if (v.referenceName.isNotEmpty())
         s << " (reference: " << v.referenceName << ")";
+    if (v.selectionInfo.isNotEmpty())
+        s << " - " << v.selectionInfo;
     if (v.pitchInfo.isNotEmpty())
         s << " - reference vocal: " << v.pitchInfo << " (tune your take to match; not applied)";
     if (! v.notInThisVersion.isEmpty())
@@ -175,11 +182,113 @@ bool VocalMatchProcessor::resetToEstimates()
     return true;
 }
 
+// ------------------------------------------------------------------- reference song
+void VocalMatchProcessor::loadReferenceSong()
+{
+    songError = {};
+    if (! referenceFile.existsAsFile())
+    {
+        peaks = {};
+        preview.hand (nullptr);
+        ++songGeneration;
+        return;
+    }
+    songLoading = true;
+    const auto file = referenceFile;
+    songPool.addJob ([this, file]
+                     {
+                         auto d = std::make_unique<Decoded>();
+                         d->file = file;
+                         d->song = vm::PreviewPlayer::decode (file, d->error);
+                         if (d->song != nullptr)
+                         {
+                             const auto& a = d->song->audio;
+                             const int n = a.getNumSamples(), buckets = 2000;
+                             d->peaks.seconds = d->song->seconds();
+                             d->peaks.lo.assign (buckets, 0.0f);
+                             d->peaks.hi.assign (buckets, 0.0f);
+                             for (int b = 0; b < buckets; ++b)
+                             {
+                                 const int s0 = (int) ((juce::int64) n * b / buckets), s1 = juce::jmax (s0 + 1, (int) ((juce::int64) n * (b + 1) / buckets));
+                                 float lo = 0.0f, hi = 0.0f;
+                                 for (int i = s0; i < juce::jmin (s1, n); ++i)
+                                 {
+                                     const float v = 0.5f * (a.getSample (0, i) + a.getSample (1, i));
+                                     lo = juce::jmin (lo, v);
+                                     hi = juce::jmax (hi, v);
+                                 }
+                                 d->peaks.lo[(size_t) b] = lo;
+                                 d->peaks.hi[(size_t) b] = hi;
+                             }
+                         }
+                         std::lock_guard<std::mutex> g (decodedLock);
+                         decoded = std::move (d);
+                     });
+}
+
+void VocalMatchProcessor::pollSong()
+{
+    preview.collect();
+    std::unique_ptr<Decoded> d;
+    {
+        std::lock_guard<std::mutex> g (decodedLock);
+        d = std::move (decoded);
+    }
+    if (d == nullptr)
+        return;
+    if (d->file != referenceFile) // the user chose another song meanwhile
+        return;
+    songLoading = false;
+    songError = d->error;
+    peaks = std::move (d->peaks);
+    preview.hand (std::move (d->song));
+    ++songGeneration;
+}
+
+juce::File VocalMatchProcessor::scanFileFor (const juce::File& song) const
+{
+    return vm::vocalMatchFolder ("Scans").getChildFile (song.getFileName() + ".singers.json");
+}
+
+bool VocalMatchProcessor::loadScanFile (const juce::File& file)
+{
+    vm::SingerScan s;
+    const auto json = file.loadFileAsString();
+    if (vm::SingerScan::parse (json, s).failed())
+        return false;
+    if (juce::File (s.reference) != referenceFile && juce::File (s.reference).getFileName() != referenceFile.getFileName())
+        return false;
+    scan = s;
+    scanJson = json;
+    juce::StringArray kept;
+    for (const auto& id : chosenSingers)
+        for (const auto& singer : scan.singers)
+            if (singer.id == id)
+                kept.add (id);
+    chosenSingers = kept;
+    ++scanGeneration;
+    return true;
+}
+
+void VocalMatchProcessor::clearScan()
+{
+    scan = {};
+    scanJson = {};
+    chosenSingers.clear();
+    ++scanGeneration;
+}
+
 juce::Result VocalMatchProcessor::makeAnalyzeRequest (vm::AnalyzeRequest& out)
 {
     if (! referenceFile.existsAsFile())
         return juce::Result::fail ("Choose the reference song first.");
     out.reference = referenceFile;
+    out.regions = regions;
+    for (const auto& id : chosenSingers)
+        for (const auto& singer : scan.singers)
+            if (singer.id == id)
+                out.singers.add (id);
+    out.perSinger = perSingerPresets && ! out.singers.isEmpty();
     if (useCapturedDry)
     {
         if (capture.seconds() < 5.0)
@@ -222,6 +331,14 @@ void VocalMatchProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("referenceFile", referenceFile.getFullPathName(), nullptr);
     state.setProperty ("dryFile", dryFile.getFullPathName(), nullptr);
     state.setProperty ("useCapturedDry", useCapturedDry, nullptr);
+    state.setProperty ("regions", vm::formatRegions (regions), nullptr);
+    state.setProperty ("chosenSingers", chosenSingers.joinIntoString (","), nullptr);
+    state.setProperty ("perSinger", perSingerPresets, nullptr);
+    state.setProperty ("singerScan", scanJson, nullptr);
+    state.setProperty ("editorWidth", editorWidth, nullptr);
+    state.setProperty ("editorHeight", editorHeight, nullptr);
+    state.setProperty ("editorPage", editorPage, nullptr);
+    state.setProperty ("collapsed", collapsedCards.joinIntoString (","), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -247,6 +364,38 @@ void VocalMatchProcessor::setStateInformation (const void* data, int sizeInBytes
                     juce::File::isAbsolutePath (v.toString()) ? juce::File (v.toString()) : juce::File();
             state.removeProperty (key, nullptr);
         }
+    auto take = [&state] (const char* key) -> juce::var
+    {
+        const auto v = state.getProperty (key);
+        state.removeProperty (key, nullptr);
+        return v;
+    };
+    regions.clear();
+    for (const auto& r : juce::StringArray::fromTokens (take ("regions").toString(), ",", {}))
+        if (r.contains ("-"))
+        {
+            const double a = r.upToFirstOccurrenceOf ("-", false, false).getDoubleValue();
+            const double b = r.fromFirstOccurrenceOf ("-", false, false).getDoubleValue();
+            if (b > a)
+                regions.add ({ a, b });
+        }
+    chosenSingers = juce::StringArray::fromTokens (take ("chosenSingers").toString(), ",", {});
+    chosenSingers.removeEmptyStrings();
+    perSingerPresets = (bool) take ("perSinger");
+    const auto scanText = take ("singerScan").toString();
+    scan = {};
+    scanJson = {};
+    if (scanText.isNotEmpty() && vm::SingerScan::parse (scanText, scan).wasOk())
+        scanJson = scanText;
+    ++scanGeneration;
+    if (const auto w = take ("editorWidth"); ! w.isVoid())
+        editorWidth = (int) w;
+    if (const auto h = take ("editorHeight"); ! h.isVoid())
+        editorHeight = (int) h;
+    if (const auto pg = take ("editorPage"); ! pg.isVoid())
+        editorPage = (int) pg;
+    collapsedCards = juce::StringArray::fromTokens (take ("collapsed").toString(), ",", {});
+    collapsedCards.removeEmptyStrings();
     apvts.replaceState (state);
     // The estimates come back for the editor; the parameter values are the saved ones.
     vm::PresetValues values;

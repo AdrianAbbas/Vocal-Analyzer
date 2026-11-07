@@ -57,6 +57,57 @@
             "null"
           ],
           "minimum": 0
+        },
+        "selection": {
+          "description": "Which part of the reference was analysed, when not all of it: marked regions and/or chosen singers (songs with more than one singer).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "analysed_s"
+          ],
+          "properties": {
+            "analysed_s": {
+              "description": "Seconds of vocal analysed.",
+              "type": "number",
+              "minimum": 0
+            },
+            "total_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "regions": {
+              "description": "Marked regions [start_s, end_s] in the song's timeline.",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "singers": {
+              "description": "The singers analysed (A, B, ...), as found by singer separation.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-H]$"
+              }
+            },
+            "overlap_excluded_s": {
+              "description": "Seconds left out because singers overlap there.",
+              "type": "number",
+              "minimum": 0
+            },
+            "singer_confidence": {
+              "description": "How sure the singer separation was, 0..1.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
         }
       }
     },

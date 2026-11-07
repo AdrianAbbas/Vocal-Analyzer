@@ -60,6 +60,27 @@ AnalyzerRun::~AnalyzerRun()
     stopThread (5000);
 }
 
+juce::String formatRegions (const juce::Array<juce::Range<double>>& regions)
+{
+    juce::StringArray parts;
+    for (const auto& r : regions)
+        parts.add (juce::String (r.getStart(), 2) + "-" + juce::String (r.getEnd(), 2));
+    return parts.joinIntoString (",");
+}
+
+namespace
+{
+void addSelection (juce::StringArray& a, const AnalyzeRequest& r)
+{
+    if (! r.regions.isEmpty())
+        a.addArray ({ "--regions", formatRegions (r.regions) });
+    if (! r.singers.isEmpty())
+        a.addArray ({ "--singer", r.singers.joinIntoString (",") });
+    if (r.perSinger && ! r.singers.isEmpty())
+        a.add ("--per-singer");
+}
+} // namespace
+
 juce::StringArray AnalyzerRun::argumentsFor (const juce::File& exe, const AnalyzeRequest& r)
 {
     juce::StringArray a;
@@ -67,7 +88,14 @@ juce::StringArray AnalyzerRun::argumentsFor (const juce::File& exe, const Analyz
     a.addArray ({ "analyze", "--reference", r.reference.getFullPathName(), "--dry", r.dry.getFullPathName(),
                   "--out", r.outPreset.getFullPathName(), "--refine", juce::String (r.refineEvals),
                   "--passes", juce::String (r.passes), "--separate", r.separate, "--progress" });
+    addSelection (a, r);
     return a;
+}
+
+juce::StringArray AnalyzerRun::argumentsFor (const juce::File& exe, const ScanRequest& r)
+{
+    return { exe.getFullPathName(), "singers", "--reference", r.reference.getFullPathName(), "--json",
+             r.outJson.getFullPathName(), "--separate", r.separate, "--progress" };
 }
 
 juce::String AnalyzerRun::shellCommandFor (const AnalyzeRequest& r)
@@ -77,10 +105,42 @@ juce::String AnalyzerRun::shellCommandFor (const AnalyzeRequest& r)
     cmd << " --reference " << q (r.reference) << " --dry " << q (r.dry) << " --out " << q (r.outPreset);
     if (r.refineEvals != 60)
         cmd << " --refine " << r.refineEvals;
+    if (! r.regions.isEmpty())
+        cmd << " --regions " << formatRegions (r.regions);
+    if (! r.singers.isEmpty())
+        cmd << " --singer " << r.singers.joinIntoString (",") << (r.perSinger ? " --per-singer" : "");
     return cmd;
 }
 
+juce::String AnalyzerRun::shellCommandFor (const ScanRequest& r)
+{
+    auto q = [] (const juce::File& f) { return f.getFullPathName().quoted ('\''); };
+    return "vocalmatch singers --reference " + q (r.reference) + " --json " + q (r.outJson);
+}
+
 bool AnalyzerRun::start (const AnalyzeRequest& r)
+{
+    if (! r.reference.existsAsFile() || ! r.dry.existsAsFile())
+    {
+        if (state.load() != State::running)
+            fail ("Choose a reference song and a dry vocal first.");
+        return false;
+    }
+    return startWith (argumentsFor (findAnalyzer(), r), r.outPreset, { r.reference, r.dry });
+}
+
+bool AnalyzerRun::start (const ScanRequest& r)
+{
+    if (! r.reference.existsAsFile())
+    {
+        if (state.load() != State::running)
+            fail ("Choose a reference song first.");
+        return false;
+    }
+    return startWith (argumentsFor (findAnalyzer(), r), r.outJson, { r.reference });
+}
+
+bool AnalyzerRun::startWith (const juce::StringArray& args, const juce::File& out, const juce::Array<juce::File>&)
 {
     if (state.load() == State::running)
         return false;
@@ -91,7 +151,8 @@ bool AnalyzerRun::start (const AnalyzeRequest& r)
         log = {};
         stage = "starting the analyzer";
     }
-    request = r;
+    arguments = args;
+    output = out;
     progress = 0.0f;
     analyzer = findAnalyzer();
     if (! analyzer.existsAsFile())
@@ -99,13 +160,9 @@ bool AnalyzerRun::start (const AnalyzeRequest& r)
         fail ("The Vocal Match analyzer is not installed (run install-mac.sh from the download).");
         return false;
     }
-    if (! r.reference.existsAsFile() || ! r.dry.existsAsFile())
-    {
-        fail ("Choose a reference song and a dry vocal first.");
-        return false;
-    }
-    r.outPreset.getParentDirectory().createDirectory();
-    r.outPreset.deleteFile();
+    arguments.set (0, analyzer.getFullPathName());
+    out.getParentDirectory().createDirectory();
+    out.deleteFile();
     state = State::running;
     startThread();
     return true;
@@ -141,7 +198,7 @@ juce::String AnalyzerRun::getLog() const
     return log;
 }
 
-juce::File AnalyzerRun::getPresetFile() const { return request.outPreset; }
+juce::File AnalyzerRun::getPresetFile() const { return output; }
 
 void AnalyzerRun::fail (const juce::String& message)
 {
@@ -169,9 +226,9 @@ void AnalyzerRun::handleLine (const juce::String& line)
 
 void AnalyzerRun::run()
 {
-    if (! process.start (argumentsFor (analyzer, request), juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+    if (! process.start (arguments, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
     {
-        fail ("This host did not let the plug-in start the analyzer (GarageBand runs plug-ins in a sandbox). "
+        fail ("This host did not let the plug-in start the analyzer (some hosts run plug-ins in a sandbox). "
               "Run the command below in Terminal, then Load preset.");
         return;
     }
@@ -203,7 +260,7 @@ void AnalyzerRun::run()
         return;
     process.waitForProcessToFinish (10000);
     const auto code = process.getExitCode();
-    if (code == 0 && request.outPreset.existsAsFile())
+    if (code == 0 && output.existsAsFile())
     {
         progress = 1.0f;
         state = State::finished;
