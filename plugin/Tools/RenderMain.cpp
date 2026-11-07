@@ -161,6 +161,8 @@ int main (int argc, char* argv[])
                 std::cout << "  " << juce::String (processor.analyzer.getProgress(), 3) << " " << st << "\n";
                 lastStage = st;
             }
+        if (const auto st = processor.analyzer.getStage(); st != lastStage) // the last stage, if it came at the end
+            std::cout << "  " << juce::String (processor.analyzer.getProgress(), 3) << " " << st << "\n";
         if (processor.analyzer.getState() != vm::AnalyzerRun::State::finished)
             return fail ("analyze: " + processor.analyzer.getError() + "\nlog: " + processor.analyzer.getLogFile().getFullPathName()
                          + "\n" + processor.analyzer.getLog());
