@@ -29,6 +29,18 @@ CHAIN_B = "lofi"       # telephone EQ, 6:1 compressor with +8 dB make-up
 LAYOUT = (("A", 9.0), ("B", 9.0), ("A", 9.0), ("B", 9.0), ("AB", 6.0), ("A", 9.0), ("B", 9.0))
 
 
+def eq_range_for(voice: Voice) -> tuple[float, float]:
+    """The bands where this singer's EQ can be measured: from just below their lowest note
+    (no energy under it) to 12.5 kHz, as in the other round trips. Singer A: 100 Hz (as
+    there); singer B, an octave up: 200 Hz."""
+    from vocalmatch.synth import SCALE_MIDI, _midi_to_hz
+
+    from cases import EQ_EVAL_RANGE_HZ
+
+    lowest = _midi_to_hz(SCALE_MIDI[0] + voice.pitch_semitones)
+    return (max(EQ_EVAL_RANGE_HZ[0], 0.9 * lowest), EQ_EVAL_RANGE_HZ[1])
+
+
 def chain(name: str) -> Preset:
     bands, c = COMBINED_CASES[name]
     p = Preset()
@@ -117,7 +129,7 @@ def run_duet_case(who: str, mode: str, seed: int = 40, singer_map=None) -> DuetR
     dry = join_masked(d.dry[who], regions_mask(d.regions(who), FS, len(d.dry[who])), FS)
     est = analyze(sel.audio, dry, FS, reference_name=f"synthetic duet: singer {who} ({mode})")
     truth = d.truth[who]
-    eq_res = compare_eq(truth.effects.eq, est.effects.eq)
+    eq_res = compare_eq(truth.effects.eq, est.effects.eq, eq_range_for(VOICE_A if who == "A" else VOICE_B))
     x = to_stereo(dry)
     shift = _rms_db(process_eq(x, FS, est.effects.eq)) - _rms_db(process_eq(x, FS, truth.effects.eq))
     # output statistics: the estimate rendered on the dry vs that singer's processed sections

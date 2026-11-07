@@ -1,7 +1,8 @@
 """Songs with more than one singer, end to end: a synthetic duet of two different singers,
 each processed by their own known chain (duet_cases.py). Choosing a singer, by singer
 separation or by marking that singer's sections by hand, must recover that singer's chain
-within the round-trip tolerances (EQ +-1.5 dB per 1/3-octave band; compressor threshold
+within the round-trip tolerances (EQ +-1.5 dB per 1/3-octave band, from the singer's lowest
+note up: below it a voice has no energy to measure the EQ by; compressor threshold
 +-2 dB, ratio +-20 %, attack / release x/÷ 2, make-up +-1.5 dB, output statistics 0.25 dB),
 and both ways of choosing must give the same result."""
 
@@ -12,7 +13,7 @@ import pytest
 from vocalmatch.preset import validate_preset_dict
 
 from cases import compare_eq
-from duet_cases import run_duet_case, synthetic_duet
+from duet_cases import VOICE_B, eq_range_for, run_duet_case, synthetic_duet
 
 pytestmark = pytest.mark.slow
 
@@ -43,7 +44,7 @@ def test_singer_chain_recovered(who, mode):
 def test_region_selection_gives_the_same_result(who):
     a, b = _case(who, "singer"), _case(who, "regions")
     ea, eb = a.preset.effects, b.preset.effects
-    same_eq = compare_eq(ea.eq, eb.eq)
+    same_eq = compare_eq(ea.eq, eb.eq, eq_range_for(VOICE_B) if who == "B" else (100.0, 12500.0))
     assert same_eq.max_err_db <= 1.5, f"EQ estimates differ by {same_eq.max_err_db:.2f} dB"
     assert abs(ea.compressor.threshold_db - eb.compressor.threshold_db) <= 2.0
     assert abs(ea.compressor.ratio / eb.compressor.ratio - 1.0) <= 0.2

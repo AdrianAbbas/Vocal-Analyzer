@@ -135,8 +135,10 @@ class CompResult:
         return all(self.checks.values())
 
 
-def compare_eq(true: EQ, est: EQ) -> EQResult:
-    centres = third_octave_centres(*EQ_EVAL_RANGE_HZ)
+def compare_eq(true: EQ, est: EQ, eval_range_hz: tuple[float, float] = EQ_EVAL_RANGE_HZ) -> EQResult:
+    """*eval_range_hz*: the bands compared (a voice has no energy below its lowest note, so
+    the EQ there cannot be measured; see duet_cases.eq_range_for)."""
+    centres = third_octave_centres(*eval_range_hz)
     t = band_average_db(lambda f: eq_response_db(true, f, FS), centres)
     e = band_average_db(lambda f: eq_response_db(est, f, FS), centres)
     diff = e - t
