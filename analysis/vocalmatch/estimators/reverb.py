@@ -124,6 +124,9 @@ class _Simulator:
         return best
 
 
+MIN_EXPLAINED = 0.3  # share of the no-reverb profile error a detected reverb must explain
+
+
 def estimate_reverb(reference: np.ndarray, dry: np.ndarray, fs: float, delay: Delay | None = None,
                     max_evals: int = 24, pre: np.ndarray | None = None) -> ReverbEstimate:
     """*pre*: the signal entering the reverb (the dry vocal through the estimates of every
@@ -165,11 +168,14 @@ def estimate_reverb(reference: np.ndarray, dry: np.ndarray, fs: float, delay: De
 
     explained = 1.0 - err / max(none_err, 1e-9)
     confidence = float(np.clip(explained, 0.0, 1.0) * np.exp(-err / 3.0))
-    reverb = Reverb(enabled=mix >= 1.0, confidence=round(confidence, 3), decay_s=round(decay, 3),
+    # A reverb must explain a fair part of the level profile after phrases: a tiny, short
+    # "room" that improves the fit by a few percent is fitting noise (e.g. phrase edges).
+    reverb = Reverb(enabled=mix >= 1.0 and explained >= MIN_EXPLAINED, confidence=round(confidence, 3), decay_s=round(decay, 3),
                     predelay_ms=round(predelay, 1), mix_pct=round(mix, 2), damping_hz=round(damping, 1))
     return ReverbEstimate(reverb, {
         "detected": reverb.enabled,
         "profile_error_db": round(err, 3),
         "profile_error_without_reverb_db": round(none_err, 3),
+        "explained": round(float(explained), 3),
         "evaluations": int(res.nfev + len(grid)),
     })
