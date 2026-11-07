@@ -172,7 +172,7 @@ runs the estimators on the result, and checks that they recover the settings:
 | Saturation | drive ±3 dB, mix ±10 |
 | De-esser | frequency ±15 %, threshold ±3 dB, reduction ±2 dB |
 | Whole chain (all eight effects at once, with refinement) | refinement lowers the distance by 30 %; EQ ±2.5 dB per band; compressor threshold ±2 dB, make-up ±1.5 dB, ratio ±30 %; delay time ±1 ms, mix ±3; reverb decay ±25 %, mix ±4; doubler mix ±5, width ±15; de-esser found |
-| Duet (two singers, two chains; `test_duet_roundtrip.py`) | each singer's EQ and compressor within the EQ / compressor tolerances above, chosen by singer separation and by regions; both choices agree |
+| Duet (two singers, two chains; `test_duet_roundtrip.py`) | each singer's EQ and compressor within the EQ / compressor tolerances above (EQ bands from the singer's lowest note up: below it there is nothing to measure by), chosen by singer separation and by regions; both choices agree |
 
 The duet is synthetic (`tests/roundtrip/duet_cases.py`): two different synthetic singers (the second
 an octave higher, with shorter vocal tract, faster vibrato, more breath), each through its own chain

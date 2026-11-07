@@ -21,13 +21,13 @@ jobs:
   python:
     name: Python tests (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 75
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
           - {os: ubuntu-latest, python: "3.10", tests: "-m 'not slow'"}
-          # The minutes-long round trips (milestone 3 effects, the whole chain) run here.
+          # The minutes-long round trips (milestone 3 effects, the whole chain, the duet) run here.
           - {os: ubuntu-latest, python: "3.13", tests: ""}
           - {os: macos-15, python: "3.12", tests: "-m 'not slow'"}
           - {os: windows-latest, python: "3.12", tests: "-m 'not slow'"}

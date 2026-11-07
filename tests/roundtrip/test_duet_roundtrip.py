@@ -75,13 +75,14 @@ def test_cli_one_preset_per_singer(tmp_path):
     out = tmp_path / "duet.json"
     r = subprocess.run([sys.executable, "-m", "vocalmatch", "analyze", "--reference", str(tmp_path / "duet.wav"),
                         "--dry", str(tmp_path / "dry.wav"), "--out", str(out), "--separate", "no",
-                        "--singer", "all", "--per-singer", "--refine", "0", "--passes", "1"],
+                        "--singer", "all", "--per-singer", "--regions", "0-36", "--refine", "0", "--passes", "1"],
                        capture_output=True, text=True, timeout=3000)
     assert r.returncode == 0, r.stdout + r.stderr
     for who in "AB":
         p = tmp_path / f"duet - Singer {who}.json"
         sel = json.loads(p.read_text())["reference"]["selection"]
-        assert sel["singers"] == [who] and sel["overlap_excluded_s"] > 1.0 and 0.9 < sel["singer_confidence"] <= 1.0
+        assert sel["singers"] == [who] and sel["regions"] == [[0.0, 36.0]] and 0.9 < sel["singer_confidence"] <= 1.0
+        assert 10.0 < sel["analysed_s"] < 20.0  # two sections of that singer inside 0-36 s
         assert f"Singer {who}, singer confidence" in r.stdout
     assert json.loads(out.read_text())["reference"]["selection"]["singers"] == ["A"]  # --out: the first singer
     assert "2 singers found" in r.stdout
