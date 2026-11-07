@@ -178,7 +178,8 @@ with_progress() {
 }
 
 "$python" -m venv --clear "$venv"
-pip=("$venv/bin/python" -m pip --disable-pip-version-check --progress-bar off)
+export PIP_PROGRESS_BAR=off PIP_DISABLE_PIP_VERSION_CHECK=1
+pip=("$venv/bin/python" -m pip)
 if ! with_progress "installing the analyzer" "${pip[@]}" install --upgrade pip \
         || ! with_progress "installing the analyzer" "${pip[@]}" install "$wheel"; then
     fail "pip could not install Vocal Match (needs internet access to PyPI). Log: $pip_log"
