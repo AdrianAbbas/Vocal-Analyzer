@@ -289,6 +289,7 @@ juce::Result VocalMatchProcessor::makeAnalyzeRequest (vm::AnalyzeRequest& out)
             if (singer.id == id)
                 out.singers.add (id);
     out.perSinger = perSingerPresets && ! out.singers.isEmpty();
+    out.separate = referenceIsVocal ? "no" : "auto";
     if (useCapturedDry)
     {
         if (capture.seconds() < 5.0)
@@ -334,6 +335,7 @@ void VocalMatchProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("regions", vm::formatRegions (regions), nullptr);
     state.setProperty ("chosenSingers", chosenSingers.joinIntoString (","), nullptr);
     state.setProperty ("perSinger", perSingerPresets, nullptr);
+    state.setProperty ("referenceIsVocal", referenceIsVocal, nullptr);
     state.setProperty ("singerScan", scanJson, nullptr);
     state.setProperty ("editorWidth", editorWidth, nullptr);
     state.setProperty ("editorHeight", editorHeight, nullptr);
@@ -382,6 +384,7 @@ void VocalMatchProcessor::setStateInformation (const void* data, int sizeInBytes
     chosenSingers = juce::StringArray::fromTokens (take ("chosenSingers").toString(), ",", {});
     chosenSingers.removeEmptyStrings();
     perSingerPresets = (bool) take ("perSinger");
+    referenceIsVocal = (bool) take ("referenceIsVocal");
     const auto scanText = take ("singerScan").toString();
     scan = {};
     scanJson = {};

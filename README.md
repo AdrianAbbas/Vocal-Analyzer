@@ -45,8 +45,11 @@ with a preset made in Terminal.
 
 ### Analyze inside the plug-in
 
-1. **Reference song...**: the song whose vocal sound you want (a full song needs Demucs:
-   `bash install.sh --with-separation`; otherwise a vocal stem).
+1. **Reference song...**: the song whose vocal sound you want, the full song (MP3 is fine): the
+   installer adds source separation (Demucs) by default, and the vocal is extracted first (once
+   per song: the stems are cached). For a vocal stem or an a cappella, tick **Isolated vocal**.
+   If the analyzer fails, the page says what happened and **Show log** opens its full log
+   (`~/Library/Logs/VocalMatch`).
 2. **Capture**, then play your vocal track: the plug-in records its input (your dry take, up to
    5 minutes; Shift-click starts over). Or pick *Dry vocal: a file...*.
 3. **Analyze**: the analyzer runs as a separate program (progress bar, Cancel); its preset loads
@@ -130,10 +133,12 @@ python -m pip install -e "analysis[dev]"
 python -m vocalmatch analyze --reference song.mp3 --dry myvocal.wav --out preset.json --render matched.wav
 ```
 
-`--reference` is the full song when Demucs is installed (`pip install -e "analysis[separation]"`,
-or `bash install.sh --with-separation`): the vocal is separated (stems cached in `song.mp3.stems/`)
-and only the sections where it is clearly present are analysed. Without Demucs, or with
-`--separate no`, give an isolated vocal stem. `--refine N` sets the refinement budget
+`--reference` is the full song: with Demucs installed (the installer's default, or
+`pip install -e "analysis[separation]"`) the vocal is separated (stems cached in
+`~/Library/Caches/VocalMatch/stems`, or `~/.cache/vocalmatch/stems`) and only the sections where it is
+clearly present are analysed. With `--separate no`, give an isolated vocal stem. Without Demucs a
+reference that looks like a full mix (energy below 80 Hz, no silences) is refused with
+"Source separation not installed: run the installer again or use an isolated vocal". `--refine N` sets the refinement budget
 (default 60 whole-chain evaluations, about a minute; 0 = off). Long material is analysed on
 45 s of excerpts.
 
@@ -243,8 +248,11 @@ alignment-free distance of the *whole-chain render* to the reference: multi-reso
 switching on saturation and a de-esser that the estimators left off; it keeps them only when the
 distance drops by 3 % and 0.1. A result is kept only if it lowers the distance.
 
-**Separation** (`separation.py`): Demucs `htdemucs` (`--two-stems vocals`), stems cached next to the song
-with its SHA-256. Sections (cut at silences) are kept when mostly voiced and the vocal stem is not mostly
+**Separation** (`separation.py`, `demucs_worker.py`): Demucs `htdemucs` through its Python API in a
+worker process (a crash there is an error, not an empty result), the song decoded by libsndfile (MP3
+included, no ffmpeg), separated in 20 s chunks with 2 s of context each side (flat memory on long
+songs, progress per chunk), at most 4 threads. Stems are cached by the song's SHA-256 (24-bit FLAC; the
+8 most recent songs). Sections (cut at silences) are kept when mostly voiced and the vocal stem is not mostly
 bleed (median vocal-to-accompaniment ratio ≥ −15 dB), each with up to 2 s of the silence after it (tails).
 
 **Pitch correction** (`estimators/pitch.py`, milestone 7): a YIN pitch track of both vocals, split into

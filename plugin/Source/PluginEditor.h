@@ -208,7 +208,9 @@ private:
     std::vector<SingerRow> singerRows;
     juce::Label singerMessage, plan;
     juce::ToggleButton perSinger { "One preset per singer" };
-    juce::TextButton analyzeButton { "Analyze" }, cancelButton { "Cancel" }, copyButton { "Copy command" };
+    juce::TextButton analyzeButton { "Analyze" }, cancelButton { "Cancel" }, copyButton { "Copy command" }, showLogButton { "Show log" };
+    juce::ToggleButton isolatedVocal { "Isolated vocal" };
+    juce::File failedLog; // the log of the last run that failed (Show log)
     double progressValue = 0.0;
     juce::ProgressBar progressBar { progressValue };
     juce::Label status;

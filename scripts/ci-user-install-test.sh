@@ -32,6 +32,8 @@ set -e
 cmd="$HOME/.local/bin/vocalmatch"
 [[ -x "$cmd" ]] || { err "install.sh did not create $cmd"; exit 1; }
 grep -q "Vocal Match analyzer is installed and passed its self-test." "$logs/install.txt" || err "installer did not report success"
+grep -q "source separation installed" "$logs/install.txt" || err "install.sh did not install source separation"
+grep -q "Separation self-test passed" "$logs/install.txt" || err "the source separation self-test did not pass"
 
 # 3. The installed command alone, from an empty folder (no repository on any path).
 use="$(mktemp -d)"

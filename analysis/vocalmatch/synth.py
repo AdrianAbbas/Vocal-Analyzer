@@ -154,3 +154,64 @@ def synthetic_vocal(
     out = out[:total]
     out += 10 ** (-80 / 20) * rng.standard_normal(total)  # noise floor
     return out / np.max(np.abs(out)) * 10 ** (peak_dbfs / 20)
+
+
+def synthetic_accompaniment(seed: int = 0, duration_s: float = 14.0, fs: int = 44100, bpm: float = 100.0) -> np.ndarray:
+    """A deterministic "band" (stereo, float64): kick, snare and hi-hat, a bass line and
+    chord pads, playing without gaps from start to end. With synthetic_vocal it makes a
+    full-length song mix (synthetic_song) for the separation and long-song tests."""
+    rng = np.random.default_rng(seed + 50_000)
+    n = int(duration_s * fs)
+    out = np.zeros((n + 2 * fs, 2))
+    beat = 60.0 / bpm
+    n_beats = int(duration_s / beat) + 1
+
+    t_kick = np.arange(int(0.35 * fs)) / fs
+    kick = np.sin(2 * np.pi * (45 * t_kick + 60 * (1 - np.exp(-t_kick / 0.03)) * 0.03)) * np.exp(-t_kick / 0.12)
+    snare_n = int(0.25 * fs)
+    hat_n = int(0.06 * fs)
+    snare_sos = butter(2, [180, 7000], btype="band", fs=fs, output="sos")
+    hat_sos = butter(4, min(7000, 0.4 * fs), btype="high", fs=fs, output="sos")
+    roots = (45 - 24, 41 - 24, 48 - 24, 43 - 24)  # A, F, C, G (two octaves below the vocal)
+    for b in range(n_beats):
+        p = int(b * beat * fs)
+        if p >= n:
+            break
+        if b % 2 == 0:
+            out[p : p + len(kick)] += 0.9 * kick[:, None]
+        else:
+            sn = sosfilt(snare_sos, rng.standard_normal(snare_n)) * np.exp(-np.arange(snare_n) / (0.06 * fs))
+            out[p : p + snare_n] += 0.35 * sn[:, None] / (np.max(np.abs(sn)) + 1e-12)
+        for half in (0, 1):
+            q = p + int(half * beat * fs / 2)
+            hat = sosfilt(hat_sos, rng.standard_normal(hat_n)) * np.exp(-np.arange(hat_n) / (0.012 * fs))
+            pan = 0.3 + 0.4 * half
+            out[q : q + hat_n, 0] += 0.12 * (1 - pan) * hat / (np.max(np.abs(hat)) + 1e-12)
+            out[q : q + hat_n, 1] += 0.12 * pan * hat / (np.max(np.abs(hat)) + 1e-12)
+        if b % 4 == 0:  # one bar: a bass note per beat pair and a held chord
+            root = roots[(b // 4) % len(roots)]
+            bar_n = int(4 * beat * fs)
+            t = np.arange(bar_n) / fs
+            f_bass = _midi_to_hz(root + 12)
+            bass = np.tanh(2.0 * np.sin(2 * np.pi * f_bass * t)) * (0.6 + 0.4 * np.exp(-(t % (2 * beat)) / 0.3))
+            out[p : p + bar_n] += 0.35 * bass[:, None]
+            chord = np.zeros(bar_n)
+            for interval in (24, 28, 31, 36):  # root, third, fifth, octave, two octaves up
+                f = _midi_to_hz(root + interval)
+                chord += sum(np.sin(2 * np.pi * k * f * t) / k ** 1.5 for k in range(1, 6))
+            chord *= 0.5 - 0.5 * np.cos(2 * np.pi * np.minimum(t / (4 * beat), 1.0))  # swell per bar
+            out[p : p + bar_n, 0] += 0.06 * chord
+            out[p : p + bar_n, 1] += 0.05 * chord
+    return out[:n]
+
+
+def synthetic_song(seed: int = 0, duration_s: float = 210.0, fs: int = 44100, vocal_db: float = 0.0):
+    """(mix (n, 2), vocal (n,), accompaniment (n, 2)): synthetic_vocal over
+    synthetic_accompaniment, peak -1 dBFS. The vocal sits *vocal_db* above its usual level
+    in the mix (0 dB: about as loud as the band)."""
+    vocal = synthetic_vocal(seed=seed, duration_s=duration_s, fs=fs, peak_dbfs=-6.0 + vocal_db)
+    band = synthetic_accompaniment(seed=seed, duration_s=duration_s, fs=fs)
+    band *= 10 ** (-8 / 20) / (np.max(np.abs(band)) + 1e-12)
+    mix = band + vocal[:, None]
+    g = 10 ** (-1 / 20) / (np.max(np.abs(mix)) + 1e-12)
+    return mix * g, vocal * g, band * g

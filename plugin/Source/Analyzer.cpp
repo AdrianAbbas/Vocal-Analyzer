@@ -1,7 +1,10 @@
 #include "Analyzer.h"
 
+#include <algorithm>
+
 #if JUCE_MAC || JUCE_LINUX || JUCE_BSD
     #include <pwd.h>
+    #include <signal.h>
     #include <unistd.h>
 #endif
 
@@ -50,6 +53,85 @@ juce::File vocalMatchFolder (const juce::String& sub)
     dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Vocal Match").getChildFile (sub);
     dir.createDirectory();
     return dir;
+}
+
+juce::File analyzerLogsFolder()
+{
+#if JUCE_MAC
+    auto dir = realHomeDirectory().getChildFile ("Library/Logs/VocalMatch");
+#else
+    auto dir = realHomeDirectory().getChildFile (".local/share/vocalmatch/logs");
+#endif
+    if (dir.createDirectory().wasOk() && dir.hasWriteAccess())
+        return dir;
+    dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("VocalMatch Logs");
+    dir.createDirectory();
+    return dir;
+}
+
+namespace
+{
+juce::String signalName (int sig)
+{
+    switch (sig)
+    {
+        case 4: return "illegal instruction";
+        case 5: return "trace trap";
+        case 6: return "abort";
+        case 7: return "bus error";
+        case 8: return "floating-point exception";
+        case 9: return "killed";
+#if JUCE_MAC
+        case 10: return "bus error";
+#endif
+        case 11: return "segmentation fault";
+        case 15: return "terminated";
+        default: return "signal " + juce::String (sig);
+    }
+}
+
+// Starts "$@" from the folder $1 in a clean, bounded environment, then prints
+// VOCALMATCH-PID (for Cancel) and VOCALMATCH-EXIT <status> (128 + n for signal n).
+const char* launcherScript = R"SH(cd "$1" 2>/dev/null || cd /tmp || exit 70
+shift
+unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONEXECUTABLE PYTHONSAFEPATH VIRTUAL_ENV __PYVENV_LAUNCHER__ CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_SHLVL CONDA_EXE CONDA_PYTHON_EXE DYLD_LIBRARY_PATH DYLD_INSERT_LIBRARIES DYLD_FRAMEWORK_PATH LD_PRELOAD KMP_DUPLICATE_LIB_OK
+export PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 PYTHONIOENCODING=utf-8 PYTHONUTF8=1
+export OMP_NUM_THREADS="$VM_THREADS" MKL_NUM_THREADS="$VM_THREADS" OPENBLAS_NUM_THREADS="$VM_THREADS" VECLIB_MAXIMUM_THREADS="$VM_THREADS" NUMEXPR_NUM_THREADS="$VM_THREADS"
+export TQDM_DISABLE=1 HF_HUB_DISABLE_PROGRESS_BARS=1
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+unset VM_THREADS
+[ -n "${LANG:-}" ] || export LANG=en_US.UTF-8
+"$@" &
+pid=$!
+echo "VOCALMATCH-PID $pid"
+wait "$pid"
+status=$?
+echo "VOCALMATCH-EXIT $status"
+exit "$status"
+)SH";
+} // namespace
+
+juce::String describeFailure (const juce::String& errorLine, int exitStatus, bool sawExitStatus, bool fatalPythonError,
+                              bool outputWritten, const juce::String& stage, const juce::String& lastLines)
+{
+    const auto during = stage.isNotEmpty() ? " while " + stage : juce::String();
+    if (errorLine.isNotEmpty())
+        return errorLine.trim();
+    if (sawExitStatus && exitStatus == 9 + 128)
+        return "The analyzer was stopped by the system" + during
+               + ", most likely because the Mac ran out of memory. Close other apps and try again, or mark a shorter part of the song.";
+    if (sawExitStatus && exitStatus > 128)
+        return "The analyzer crashed (" + signalName (exitStatus - 128) + ")" + during + ". No preset was made.";
+    if (fatalPythonError)
+        return "The analyzer crashed (a fatal error in Python)" + during + ". No preset was made.";
+    if (! sawExitStatus)
+        return "The analyzer ended unexpectedly" + during + ". No preset was made.";
+    if (exitStatus != 0)
+        return "The analyzer stopped with an error (exit " + juce::String (exitStatus) + ")" + during
+               + (lastLines.isNotEmpty() ? ": " + lastLines : juce::String (".")) ;
+    if (! outputWritten)
+        return "The analyzer finished without writing a preset" + during + ".";
+    return "The analyzer failed" + during + ".";
 }
 
 AnalyzerRun::AnalyzerRun() : juce::Thread ("Vocal Match analyzer") {}
@@ -105,6 +187,8 @@ juce::String AnalyzerRun::shellCommandFor (const AnalyzeRequest& r)
     cmd << " --reference " << q (r.reference) << " --dry " << q (r.dry) << " --out " << q (r.outPreset);
     if (r.refineEvals != 60)
         cmd << " --refine " << r.refineEvals;
+    if (r.separate != "auto")
+        cmd << " --separate " << r.separate;
     if (! r.regions.isEmpty())
         cmd << " --regions " << formatRegions (r.regions);
     if (! r.singers.isEmpty())
@@ -115,7 +199,8 @@ juce::String AnalyzerRun::shellCommandFor (const AnalyzeRequest& r)
 juce::String AnalyzerRun::shellCommandFor (const ScanRequest& r)
 {
     auto q = [] (const juce::File& f) { return f.getFullPathName().quoted ('\''); };
-    return "vocalmatch singers --reference " + q (r.reference) + " --json " + q (r.outJson);
+    return "vocalmatch singers --reference " + q (r.reference) + " --json " + q (r.outJson)
+           + (r.separate != "auto" ? " --separate " + r.separate : juce::String());
 }
 
 bool AnalyzerRun::start (const AnalyzeRequest& r)
@@ -126,6 +211,7 @@ bool AnalyzerRun::start (const AnalyzeRequest& r)
             fail ("Choose a reference song and a dry vocal first.");
         return false;
     }
+    kind = "analyze";
     return startWith (argumentsFor (findAnalyzer(), r), r.outPreset, { r.reference, r.dry });
 }
 
@@ -137,6 +223,7 @@ bool AnalyzerRun::start (const ScanRequest& r)
             fail ("Choose a reference song first.");
         return false;
     }
+    kind = "singers";
     return startWith (argumentsFor (findAnalyzer(), r), r.outJson, { r.reference });
 }
 
@@ -149,8 +236,12 @@ bool AnalyzerRun::startWith (const juce::StringArray& args, const juce::File& ou
         std::lock_guard<std::mutex> g (lock);
         error = {};
         log = {};
+        errorLine = {};
+        exitStatus = -1;
+        fatalPythonError = false;
         stage = "starting the analyzer";
     }
+    childPid = 0;
     arguments = args;
     output = out;
     progress = 0.0f;
@@ -174,6 +265,11 @@ void AnalyzerRun::cancel()
     {
         state = State::cancelled;
         signalThreadShouldExit();
+#if JUCE_MAC || JUCE_LINUX || JUCE_BSD
+        // The analyzer itself (the wrapper's child): it stops its separation worker on SIGTERM.
+        if (const int pid = childPid.load(); pid > 1)
+            ::kill ((pid_t) pid, SIGTERM);
+#endif
         process.kill();
     }
 }
@@ -200,6 +296,21 @@ juce::String AnalyzerRun::getLog() const
 
 juce::File AnalyzerRun::getPresetFile() const { return output; }
 
+juce::File AnalyzerRun::getLogFile() const
+{
+    std::lock_guard<std::mutex> g (lock);
+    return logFile;
+}
+
+void AnalyzerRun::writeLog (const juce::String& text)
+{
+    if (logStream != nullptr)
+    {
+        logStream->writeText (text, false, false, "\n");
+        logStream->flush();
+    }
+}
+
 void AnalyzerRun::fail (const juce::String& message)
 {
     {
@@ -211,7 +322,22 @@ void AnalyzerRun::fail (const juce::String& message)
 
 void AnalyzerRun::handleLine (const juce::String& line)
 {
+    writeLog (line + "\n");
     std::lock_guard<std::mutex> g (lock);
+    if (line.startsWith ("VOCALMATCH-PID "))
+    {
+        childPid = line.fromFirstOccurrenceOf (" ", false, false).getIntValue();
+        return;
+    }
+    if (line.startsWith ("VOCALMATCH-EXIT "))
+    {
+        exitStatus = line.fromFirstOccurrenceOf (" ", false, false).getIntValue();
+        return;
+    }
+    if (line.startsWith ("ERROR "))
+        errorLine = line.fromFirstOccurrenceOf ("ERROR ", false, false);
+    if (line.startsWith ("Fatal Python error") || line.contains ("Segmentation fault") || line.startsWith ("Current thread 0x"))
+        fatalPythonError = true;
     if (line.startsWith ("PROGRESS "))
     {
         const auto rest = line.fromFirstOccurrenceOf ("PROGRESS ", false, false);
@@ -226,10 +352,44 @@ void AnalyzerRun::handleLine (const juce::String& line)
 
 void AnalyzerRun::run()
 {
-    if (! process.start (arguments, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+    // The full log of this run (older logs beyond the last 30 are removed).
     {
+        const auto dir = analyzerLogsFolder();
+        auto old = dir.findChildFiles (juce::File::findFiles, false, "*.log");
+        std::sort (old.begin(), old.end(), [] (const juce::File& a, const juce::File& b)
+                   { return a.getLastModificationTime() > b.getLastModificationTime(); });
+        for (int i = 30; i < old.size(); ++i)
+            old.getReference (i).deleteFile();
+        auto file = dir.getNonexistentChildFile (kind + " " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H.%M.%S"), ".log", false);
+        std::lock_guard<std::mutex> g (lock);
+        logFile = file;
+        logStream = std::make_unique<juce::FileOutputStream> (file);
+        if (! logStream->openedOk())
+            logStream.reset();
+    }
+    juce::StringArray command;
+#if JUCE_MAC || JUCE_LINUX || JUCE_BSD
+    const int threads = juce::jlimit (1, 4, juce::SystemStats::getNumCpus());
+    command.addArray ({ "/usr/bin/env", "VM_THREADS=" + juce::String (threads), "/bin/sh", "-c", launcherScript, "vocalmatch-launcher",
+                        analyzerLogsFolder().getFullPathName() });
+#endif
+    command.addArray (arguments);
+#ifdef JucePlugin_VersionString
+    const juce::String version = JucePlugin_VersionString;
+#else
+    const juce::String version = "?";
+#endif
+    writeLog ("Vocal Match " + version + ", " + juce::SystemStats::getOperatingSystemName() + " ("
+              + juce::SystemStats::getCpuModel() + ", " + juce::String (juce::SystemStats::getNumCpus()) + " cores, "
+              + juce::String (juce::SystemStats::getMemorySizeInMegabytes()) + " MB)\n");
+    writeLog ("host: " + juce::File::getSpecialLocation (juce::File::hostApplicationPath).getFullPathName() + "\n");
+    writeLog ("command: " + arguments.joinIntoString (" ") + "\n\n");
+    if (! process.start (command, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+    {
+        writeLog ("could not start the process\n");
         fail ("This host did not let the plug-in start the analyzer (some hosts run plug-ins in a sandbox). "
               "Run the command below in Terminal, then Load preset.");
+        logStream.reset();
         return;
     }
     std::vector<char> lineBytes; // bytes of the current line (UTF-8 may split across reads)
@@ -257,21 +417,44 @@ void AnalyzerRun::run()
     if (! lineBytes.empty())
         handleLine (juce::String::fromUTF8 (lineBytes.data(), (int) lineBytes.size()).trimEnd());
     if (state.load() == State::cancelled)
-        return;
-    process.waitForProcessToFinish (10000);
-    const auto code = process.getExitCode();
-    if (code == 0 && output.existsAsFile())
     {
+        writeLog ("\ncancelled\n");
+        logStream.reset();
+        return;
+    }
+    process.waitForProcessToFinish (10000);
+    bool sawExit;
+    int status;
+    {
+        std::lock_guard<std::mutex> g (lock);
+        sawExit = exitStatus >= 0;
+        status = exitStatus;
+    }
+#if ! (JUCE_MAC || JUCE_LINUX || JUCE_BSD)
+    sawExit = true;
+    status = (int) process.getExitCode();
+#endif
+    const bool written = output.existsAsFile();
+    if (sawExit && status == 0 && written && errorLine.isEmpty())
+    {
+        writeLog ("\nfinished: " + output.getFullPathName() + "\n");
+        logStream.reset();
         progress = 1.0f;
         state = State::finished;
+        return;
     }
-    else
+    const auto tail = juce::StringArray::fromLines (getLog().trimEnd());
+    juce::String last;
+    for (int i = juce::jmax (0, tail.size() - 2); i < tail.size(); ++i)
+        last << tail[i] << " ";
+    juce::String message;
     {
-        const auto tail = juce::StringArray::fromLines (getLog().trimEnd());
-        juce::String last;
-        for (int i = juce::jmax (0, tail.size() - 3); i < tail.size(); ++i)
-            last << tail[i] << " ";
-        fail ("The analyzer stopped (exit " + juce::String ((int) code) + "): " + last.trim());
+        std::lock_guard<std::mutex> g (lock);
+        message = describeFailure (errorLine, status, sawExit, fatalPythonError, written, stage, last.trim());
     }
+    writeLog ("\nfailed: " + message + "\n");
+    logStream.reset();
+    output.deleteFile(); // never load a half-written result
+    fail (message);
 }
 } // namespace vm

@@ -91,7 +91,7 @@ jobs:
     # download with install-mac.sh, then auval (arm64 and x86_64) and pluginval.
     name: Plug-in package + user install test (macOS)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_SLOPPINESS: time_macros,include_file_mtime,include_file_ctime
@@ -142,10 +142,13 @@ jobs:
         run: bash scripts/package-mac.sh plugin/build/VocalMatch_artefacts/Release dist
       - name: Fetch pluginval
         run: bash scripts/ci-fetch-pluginval.sh "$PLUGINVAL_VERSION" "${{ runner.temp }}/pluginval"
-      # One script, the user's whole path: quarantined download, install-mac.sh (plug-in + analyzer),
-      # auval arm64 + x86_64, pluginval strictness 5 on the installed AU and VST3, the analyzer's
-      # preset rendered by the plug-in's processor, uninstall-mac.sh.
-      - name: Install a quarantined download with install-mac.sh, then auval, pluginval and the analyzer
+      # One script, the user's whole path: quarantined download, install-mac.sh (plug-in + analyzer
+      # with source separation, in a private Python 3.12), auval arm64 + x86_64, pluginval
+      # strictness 5 on the installed AU and VST3, the analyzer's preset rendered by the plug-in's
+      # processor, then a full-length MP3 song + a 7 s dry take through the plug-in's Analyze
+      # launched like a host app (twice: the second reuses the separated stems), a crashing
+      # analyzer reported as a crash with its log, uninstall-mac.sh.
+      - name: Install a quarantined download as a user, validate, then a full-length MP3 through the plug-in Analyze
         run: >
           bash scripts/ci-user-install-test-mac.sh dist/VocalMatch-macOS-Universal.zip build/ci-logs
           plugin/build/VocalMatchRender_artefacts/Release/VocalMatchRender
@@ -170,7 +173,7 @@ jobs:
             echo ""
             echo "GarageBand: Smart Controls (B) > Plug-ins > an empty slot > Audio Units > Windward Audio > Vocal Match, then **Load preset...**"
             echo ""
-            echo "Tested on this run: quarantined download -> \`install-mac.sh\` -> auval arm64 + x86_64 -> pluginval -> analyzer self-test -> analyzer preset in the plug-in -> \`uninstall-mac.sh\`."
+            echo "Tested on this run: quarantined download -> \`install-mac.sh\` (analyzer + source separation) -> auval arm64 + x86_64 -> pluginval -> analyzer and separation self-tests -> analyzer preset in the plug-in -> full-length MP3 + 7 s dry take through the plug-in's Analyze -> \`uninstall-mac.sh\`."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload diagnostics
         if: always()

@@ -92,6 +92,7 @@ public:
     juce::Array<juce::Range<double>> regions; // marked by hand; empty = the whole song
     juce::StringArray chosenSingers;          // ticked in the Analyze panel
     bool perSingerPresets = false;
+    bool referenceIsVocal = false; // the reference is an isolated vocal: no source separation
 
     // ---- editor state (saved with the song) ----------------------------------------------
     int editorWidth = 1040, editorHeight = 660, editorPage = 0;

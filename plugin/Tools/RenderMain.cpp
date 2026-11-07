@@ -12,6 +12,9 @@
 //   VocalMatchRender --analyze ref.wav dry.wav [--analyze-out p.json] [--analyze-refine N] [--analyze-passes N]
 //                    (the plug-in's Analyze: runs the installed analyzer, loads its preset)
 //                    [--analyze-singers A,B] [--analyze-regions a-b,c-d] [--analyze-per-singer]
+//                    [--analyze-isolated-vocal]  (the reference is a vocal stem: no source separation;
+//                    without it the song is separated, as the plug-in does by default)
+//                    On failure: the plug-in's message, then "log: <the run's full log>".
 //   VocalMatchRender --find-singers song.wav   (the Analyze panel's Find singers: runs the analyzer's scan)
 //   ... --capture take.wav   (arms the plug-in's capture while rendering, writes the take)
 //
@@ -44,7 +47,7 @@ int main (int argc, char* argv[])
     bool listParams = false;
     juce::File snapshotFile, analyzeRef, analyzeDry, analyzeOut, captureFile, referenceSong, scanFile, previewSong;
     juce::String sizeText, pageText, regionsText, singersText, collapseText;
-    bool checkLayoutFlag = false, analyzePerSinger = false;
+    bool checkLayoutFlag = false, analyzePerSinger = false, analyzeIsolatedVocal = false;
     juce::String analyzeSingers, analyzeRegions;
     juce::File findSingersSong;
     double previewStart = 0.0, previewEnd = 0.0;
@@ -83,6 +86,7 @@ int main (int argc, char* argv[])
         else if (arg == "--analyze-singers") analyzeSingers = next();
         else if (arg == "--analyze-regions") analyzeRegions = next();
         else if (arg == "--analyze-per-singer") analyzePerSinger = true;
+        else if (arg == "--analyze-isolated-vocal") analyzeIsolatedVocal = true;
         else if (arg == "--find-singers") findSingersSong = juce::File::getCurrentWorkingDirectory().getChildFile (next());
         else if (arg == "--preview")
         {
@@ -131,6 +135,7 @@ int main (int argc, char* argv[])
         processor.referenceFile = analyzeRef;
         processor.dryFile = analyzeDry;
         processor.useCapturedDry = false;
+        processor.referenceIsVocal = analyzeIsolatedVocal;
         vm::AnalyzeRequest request;
         if (auto r = processor.makeAnalyzeRequest (request); r.failed())
             return fail ("analyze: " + r.getErrorMessage());
@@ -138,7 +143,6 @@ int main (int argc, char* argv[])
             request.outPreset = analyzeOut;
         request.refineEvals = analyzeRefine;
         request.passes = analyzePasses;
-        request.separate = "no";
         for (const auto& r : juce::StringArray::fromTokens (analyzeRegions, ",", {}))
             if (r.contains ("-"))
                 request.regions.add ({ r.upToFirstOccurrenceOf ("-", false, false).getDoubleValue(),
@@ -158,7 +162,9 @@ int main (int argc, char* argv[])
                 lastStage = st;
             }
         if (processor.analyzer.getState() != vm::AnalyzerRun::State::finished)
-            return fail ("analyze: " + processor.analyzer.getError() + "\n" + processor.analyzer.getLog());
+            return fail ("analyze: " + processor.analyzer.getError() + "\nlog: " + processor.analyzer.getLogFile().getFullPathName()
+                         + "\n" + processor.analyzer.getLog());
+        std::cout << "log: " << processor.analyzer.getLogFile().getFullPathName() << "\n";
         if (auto r = processor.loadPresetFile (processor.analyzer.getPresetFile()); r.failed())
             return fail ("analyze: " + r.getErrorMessage());
         std::cout << "analyzed: " << processor.analyzer.getPresetFile().getFullPathName() << "\n";

@@ -9,25 +9,47 @@ from pathlib import Path
 from . import __version__
 
 
-def _load_reference_stem(args, fs: int, progress) -> tuple:
+def _load_reference_stem(args, fs: int, progress, span: float = 0.5) -> tuple:
     """(stem (n, ch), accompaniment or None, separation diagnostics, used_demucs) in the song's
-    timeline at *fs*. Raises SeparationUnavailable."""
+    timeline at *fs*. The separation reports progress over [0, *span*]. Raises
+    SeparationUnavailable (no Demucs and the reference looks like a full mix) or
+    SeparationFailed."""
     from .audio_io import load_audio
-    from .separation import demucs_available, separate
+    from .separation import NOT_INSTALLED, SeparationUnavailable, demucs_available, load_stem, looks_like_full_mix, separate
 
     use_demucs = args.separate == "yes" or (args.separate == "auto" and demucs_available())
     if not use_demucs:
+        progress(0.0, "reading the reference")
         reference, _ = load_audio(args.reference, target_fs=fs)
         if args.separate == "auto":
-            print("note: Demucs is not installed, so --reference is analysed as-is and should be an isolated "
-                  "vocal stem (install it with: pip install \"vocalmatch[separation]\").", file=sys.stderr)
+            mix, feats = looks_like_full_mix(reference, fs)
+            if mix:
+                print(f"note: the reference looks like a full mix ({100 * feats['low_80hz']:.0f} % of its energy below "
+                      f"80 Hz, {100 * feats['silent']:.0f} % silence) and Demucs is not installed. If it is an isolated "
+                      "vocal, pass --separate no.", file=sys.stderr)
+                raise SeparationUnavailable(NOT_INSTALLED)
+            print("note: Demucs is not installed, so --reference is analysed as-is (it looks like an isolated vocal).",
+                  file=sys.stderr)
         return reference, None, {}, False
     progress(0.0, "separating the vocal from the song")
-    vocals_path, rest_path, cached = separate(args.reference)
-    print(f"vocal stem: {vocals_path}{' (cached)' if cached else ''}")
-    vocals, _ = load_audio(vocals_path, target_fs=fs)
-    rest, _ = load_audio(rest_path, target_fs=fs)
+    vocals_path, rest_path, cached = separate(args.reference, progress=lambda f, st: progress(f * span, st))
+    print(f"vocal stem: {vocals_path}{' (cached: separated before)' if cached else ''}", flush=True)
+    progress(0.05 if cached else span, "reading the separated vocal")
+    vocals, _ = load_stem(vocals_path, target_fs=fs)
+    rest, _ = load_stem(rest_path, target_fs=fs)
     return vocals, rest, {"stem": str(vocals_path), "cached": cached}, True
+
+
+def _peak_memory() -> str:
+    """'peak memory: analyzer N MB, separation M MB' (for the logs)."""
+    try:
+        import resource
+    except ImportError:
+        return "peak memory: unknown"
+    scale = 1 / (1 << 20) if sys.platform == "darwin" else 1 / 1024  # ru_maxrss: bytes on macOS, KiB on Linux
+    own = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
+    kids = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * scale
+    return f"peak memory: analyzer {own:.0f} MB" + (f", source separation {kids:.0f} MB" if kids > 1 else "")
 
 
 def _singer_ids(text: str | None, singer_map) -> list[str]:
@@ -78,7 +100,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     from .chain import render
     from .pipeline import analyze
     from .selection import format_regions, parse_regions, select_reference
-    from .separation import SeparationUnavailable, select_sections
+    from .separation import select_sections
 
     def progress(fraction: float, stage: str, lo: float = 0.0, hi: float = 1.0) -> None:
         # Machine-readable lines for the plug-in's Analyze button (--progress).
@@ -88,18 +110,14 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     try:
         regions = parse_regions(args.regions) if args.regions else None
     except ValueError as exc:
-        print(f"error: --regions: {exc}", file=sys.stderr)
-        return 2
+        return _fail(args, f"--regions: {exc}", 2)
     if args.per_singer and not args.singer:
-        print("error: --per-singer needs --singer (e.g. --singer all)", file=sys.stderr)
-        return 2
+        return _fail(args, "--per-singer needs --singer (e.g. --singer all)", 2)
 
+    progress(0.0, "reading your dry vocal")
     dry, fs = load_audio(args.dry)
-    try:
-        stem, rest, separation, used_demucs = _load_reference_stem(args, fs, progress)
-    except SeparationUnavailable as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+    stem, rest, separation, used_demucs = _load_reference_stem(args, fs, progress)
+    sep_end = (0.05 if separation.get("cached") else 0.5) if used_demucs else 0.0
     base_mask = None
     if rest is not None:
         sel = select_sections(stem, rest, fs)
@@ -112,14 +130,13 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
     if args.singer:
         from .singers import detect_singers
 
-        progress(0.0, "finding the singers", 0.2 if used_demucs else 0.0, 0.25 if used_demucs else 0.05)
+        progress(0.0, "finding the singers", sep_end, sep_end + 0.05)
         singer_map = detect_singers(stem, fs)
         print(f"singers: {singer_map.message} (confidence {100 * singer_map.confidence:.0f} %)")
         try:
             chosen = _singer_ids(args.singer, singer_map)
         except ValueError as exc:
-            print(f"error: --singer: {exc}", file=sys.stderr)
-            return 2
+            return _fail(args, f"--singer: {exc}", 2)
         if singer_map.unsure:
             print("warning: singer detection is unsure; the result may mix singers. "
                   "Mark the sections to analyse with --regions instead.", file=sys.stderr)
@@ -128,17 +145,16 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
 
     # One analysis per singer with --per-singer, else one for the whole choice.
     jobs = [[c] for c in chosen] if args.per_singer else [chosen]
-    lo = 0.25 if used_demucs else (0.05 if chosen else 0.0)
+    lo = sep_end + (0.05 if chosen else 0.0)
     span = (1.0 - lo) / len(jobs)
     for j, who in enumerate(jobs):
         sel = select_reference(stem, fs, base_mask=base_mask, regions=regions, singer_map=singer_map, singers=who or None)
         for note in sel.notes:
             print(f"note: {note}", file=sys.stderr)
         if sel.analysed_s < 3.0:
-            print(f"error: only {sel.analysed_s:.1f} s of vocal to analyse"
+            return _fail(args, f"Only {sel.analysed_s:.1f} s of vocal to analyse"
                   f"{' for singer ' + ', '.join(who) if who else ''}{' in the regions given' if regions else ''}: "
-                  "choose more of the song.", file=sys.stderr)
-            return 2
+                  "choose more of the song.", 2)
         label = ("Singer " + " + ".join(who)) if who else ("regions " + format_regions(regions) if regions else "")
         what = f"analysing {sel.analysed_s:.1f} s of {sel.total_s:.1f} s"
         if who:
@@ -167,6 +183,7 @@ def _cmd_analyze(args: argparse.Namespace) -> int:
         if args.render and j == 0:
             write_audio(args.render, render(preset, dry, fs, tail_s=args.tail), fs)
             print(f"wrote {args.render}")
+    print(_peak_memory())
     return 0
 
 
@@ -174,7 +191,6 @@ def _cmd_singers(args: argparse.Namespace) -> int:
     """Who sings when in the reference (for the plug-in's Analyze panel)."""
     import json
 
-    from .separation import SeparationUnavailable
     from .singers import detect_singers
 
     def progress(fraction: float, stage: str, lo: float = 0.0, hi: float = 1.0) -> None:
@@ -183,11 +199,7 @@ def _cmd_singers(args: argparse.Namespace) -> int:
 
     info = __import__("soundfile").info(str(args.reference))
     fs = int(info.samplerate)
-    try:
-        stem, _, separation, used_demucs = _load_reference_stem(args, fs, progress)
-    except SeparationUnavailable as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+    stem, _, separation, used_demucs = _load_reference_stem(args, fs, progress, span=0.85)
     progress(0.9 if used_demucs else 0.1, "finding the singers")
     m = detect_singers(stem, fs)
     d = {"version": 1, "reference": str(Path(args.reference).resolve()), "separated": used_demucs, **separation,
@@ -242,10 +254,19 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _cmd_selftest(args: argparse.Namespace) -> int:
-    from .selftest import run
+    from .selftest import run, run_separation
+    from .separation import demucs_available
 
     print("Vocal Match self-test: synthetic vocal through a known EQ + compressor, then analysed (about a minute)")
-    return 0 if run() else 1
+    ok = run()
+    if args.separation == "yes" or (args.separation == "auto" and demucs_available()):
+        print("Source separation self-test: a synthetic song (vocal + drums, bass, chords) separated with Demucs "
+              "(the first run downloads the model, about 80 MB)")
+        ok = run_separation() and ok
+    elif args.separation == "auto":
+        print("  NOTE  source separation is not installed: give the analyzer isolated vocals, "
+              "or run the installer again to add it")
+    return 0 if ok else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -305,13 +326,71 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("presets", nargs="+")
     v.set_defaults(func=_cmd_validate)
     t = sub.add_parser("selftest", help="check the installation: analyse a synthetic vocal with known settings")
+    t.add_argument("--separation", choices=("auto", "yes", "no"), default="auto",
+                   help="also check source separation: auto = when Demucs is installed (default); yes = it must work")
     t.set_defaults(func=_cmd_selftest)
     return p
 
 
+def _limit_threads() -> None:
+    """Bounded native thread pools (OpenMP / MKL / OpenBLAS / Accelerate), before numpy loads.
+    A plug-in host's environment can carry odd values; at most 4 threads keeps an 8 GB
+    MacBook Air responsive while the host plays."""
+    import os
+
+    n = str(max(1, min(4, os.cpu_count() or 1)))
+    for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+              "NUMEXPR_NUM_THREADS"):
+        v = os.environ.get(k, "")
+        if not v.isdigit() or int(v) < 1:
+            os.environ[k] = n
+
+
+def _fail(args, message: str, code: int) -> int:
+    """A failure the user can act on: 'error: ...' for Terminal and, for the plug-in
+    (--progress), one 'ERROR <message>' line it shows as is."""
+    print(f"error: {message}", file=sys.stderr, flush=True)
+    if getattr(args, "progress", False):
+        print("ERROR " + message.replace("\n", " "), flush=True)
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
+    import faulthandler
+
+    import signal
+
+    try:
+        faulthandler.enable(all_threads=True)  # a native crash prints where it happened
+    except (AttributeError, ValueError, OSError):  # stderr without a file descriptor (tests)
+        pass
+    _limit_threads()
+    if hasattr(signal, "SIGTERM"):  # the plug-in's Cancel: unwind, so the separation worker is stopped too
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     args = build_parser().parse_args(argv)
-    return int(args.func(args))
+    from .separation import SeparationFailed, SeparationUnavailable
+
+    try:
+        return int(args.func(args))
+    except SeparationUnavailable as exc:
+        return _fail(args, str(exc), 2)
+    except SeparationFailed as exc:
+        return _fail(args, f"Source separation failed: {exc}", 3)
+    except MemoryError:
+        return _fail(args, "Not enough memory to analyse this song. Close other apps, or mark shorter regions "
+                           "of the song to analyse, and try again.", 4)
+    except FileNotFoundError as exc:
+        return _fail(args, f"File not found: {exc.filename or exc}", 2)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:  # noqa: BLE001 - anything else: a clear line, the traceback in the log
+        import traceback
+
+        traceback.print_exc()
+        name = type(exc).__name__
+        if name == "LibsndfileError" or "Error opening" in str(exc):
+            return _fail(args, f"Could not read an audio file ({str(exc).splitlines()[0]}). Use WAV, AIFF, FLAC or MP3.", 2)
+        return _fail(args, f"The analyzer hit an internal error ({name}: {str(exc).splitlines()[0] if str(exc) else ''}).", 1)
 
 
 if __name__ == "__main__":

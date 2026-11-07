@@ -837,6 +837,19 @@ AnalyzePage::AnalyzePage (VocalMatchProcessor& p) : processor (p), waveform (p)
         processor.perSingerPresets = perSinger.getToggleState();
         refreshPlan();
     };
+    isolatedVocal.setTooltip ("Tick when the reference is already an isolated vocal (an a cappella or a vocal stem). "
+                              "Otherwise the analyzer extracts the vocal from the full song first (source separation).");
+    isolatedVocal.setToggleState (processor.referenceIsVocal, juce::dontSendNotification);
+    isolatedVocal.onClick = [this] { processor.referenceIsVocal = isolatedVocal.getToggleState(); };
+    showLogButton.setTooltip ("Show the full log of the run that failed in Finder (~/Library/Logs/VocalMatch)");
+    showLogButton.onClick = [this]
+    {
+        if (failedLog.existsAsFile())
+            failedLog.revealToUser();
+        else
+            vm::analyzerLogsFolder().revealToUser();
+    };
+    showLogButton.setVisible (false);
     analyzeButton.setTooltip ("Run the analyzer on the reference and your dry vocal, then load its preset");
     analyzeButton.onClick = [this] { startAnalysis(); };
     cancelButton.onClick = [this]
@@ -870,8 +883,9 @@ AnalyzePage::AnalyzePage (VocalMatchProcessor& p) : processor (p), waveform (p)
     for (juce::Component* c : std::initializer_list<juce::Component*> { &referenceButton, &referenceLabel, &captureButton, &drySource, &dryLabel,
                                                                        &waveform, &playButton, &stopButton, &clearButton, &scanButton, &hint,
                                                                        &scanStatus, &singerMessage, &plan, &perSinger, &analyzeButton,
-                                                                       &cancelButton, &copyButton, &progressBar, &status })
+                                                                       &cancelButton, &copyButton, &progressBar, &status, &isolatedVocal })
         addAndMakeVisible (c);
+    addChildComponent (showLogButton);
     captureButton.setToggleState (processor.capture.isArmed(), juce::dontSendNotification);
     if (processor.getPeaks().lo.empty() && processor.referenceFile.existsAsFile() && ! processor.isSongLoading())
         processor.loadReferenceSong();
@@ -916,6 +930,8 @@ void AnalyzePage::resized()
     transport.removeFromLeft (4);
     clearButton.setBounds (transport.removeFromLeft (100));
     transport.removeFromLeft (8);
+    isolatedVocal.setBounds (transport.removeFromLeft (120));
+    transport.removeFromLeft (8);
     scanButton.setBounds (transport.removeFromRight (110));
     transport.removeFromRight (6);
     scanStatus.setBounds (transport.removeFromRight (juce::jmin (300, transport.getWidth() / 2)));
@@ -947,6 +963,8 @@ void AnalyzePage::resized()
     cancelButton.setBounds (run.removeFromLeft (70));
     run.removeFromLeft (8);
     copyButton.setBounds (run.removeFromRight (120));
+    run.removeFromRight (6);
+    showLogButton.setBounds (run.removeFromRight (80));
     run.removeFromRight (8);
     progressBar.setBounds (run.reduced (0, 3));
     bottom.removeFromTop (4);
@@ -1127,6 +1145,7 @@ void AnalyzePage::startScan()
     vm::ScanRequest r;
     r.reference = processor.referenceFile;
     r.outJson = processor.scanFileFor (r.reference);
+    r.separate = processor.referenceIsVocal ? "no" : "auto";
     lastCommand = vm::AnalyzerRun::shellCommandFor (r);
     if (! processor.scanner.start (r))
         scanStatus.setText (processor.scanner.getError(), juce::dontSendNotification);
@@ -1196,6 +1215,7 @@ void AnalyzePage::update()
         }
         else if (scanState == State::failed)
         {
+            failedLog = processor.scanner.getLogFile();
             auto msg = processor.scanner.getError();
             if (lastCommand.startsWith ("vocalmatch singers"))
             {
@@ -1241,12 +1261,18 @@ void AnalyzePage::update()
         }
         else if (state == State::failed)
         {
+            failedLog = processor.analyzer.getLogFile();
             auto msg = processor.analyzer.getError();
-            if (lastCommand.startsWith ("vocalmatch analyze"))
+            if (msg.contains ("did not let the plug-in start") && lastCommand.startsWith ("vocalmatch analyze"))
             {
+                // The host did not start it at all: the command for Terminal.
                 juce::SystemClipboard::copyTextToClipboard (lastCommand);
                 msg << " (Command copied: paste it in Terminal.)";
             }
+            else if (failedLog.existsAsFile())
+                msg << " The full log is saved in "
+                    << failedLog.getParentDirectory().getFullPathName().replace (vm::realHomeDirectory().getFullPathName(), "~")
+                    << " (Show log).";
             status.setText (msg, juce::dontSendNotification);
         }
         else if (state == State::cancelled)
@@ -1254,6 +1280,9 @@ void AnalyzePage::update()
         lastState = state;
     }
     status.setTooltip (status.getText());
+    const bool showLog = (state == State::failed || scanState == State::failed) && failedLog.existsAsFile();
+    if (showLogButton.isVisible() != showLog)
+        showLogButton.setVisible (showLog);
     playButton.setEnabled (! processor.getPeaks().lo.empty());
     for (auto& row : singerRows)
         row.preview->setEnabled (! processor.getPeaks().lo.empty());

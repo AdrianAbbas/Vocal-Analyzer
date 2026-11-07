@@ -35,9 +35,13 @@ INSTALL
 
 MAKE A PRESET
   vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav --out preset.json
-  --reference can be the full song if Demucs is installed (run the installer with
-  --with-separation, about 1 GB more); otherwise give an isolated vocal stem (an a
-  cappella). WAV, FLAC and MP3 are read. Analysis takes one to a few minutes.
+  --reference is the full song (WAV, AIFF, FLAC or MP3): the installer adds source
+  separation (Demucs + PyTorch, about 250 MB to download, 1 GB on disk), which extracts
+  the vocal first. The first analysis of a song takes a few minutes (the separation
+  runs in chunks, with progress); later ones reuse the separated vocal. For an isolated
+  vocal stem (an a cappella) add --separate no (in the plug-in: tick "Isolated vocal").
+  Installed with --no-separation, the analyzer refuses full songs rather than guess.
+  If an analysis fails, its full log is in ~/Library/Logs/VocalMatch.
 
 GARAGEBAND
   Settings > Audio/MIDI: tick "Audio Units". Restart GarageBand.

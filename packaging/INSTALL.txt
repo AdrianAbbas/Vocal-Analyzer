@@ -28,9 +28,11 @@ USE
   vocalmatch analyze --reference reference_vocal.wav --dry my_vocal.wav \
                      --out preset.json --render matched.wav
 
-  --reference can be the full song if Demucs is installed (bash install.sh
-  --with-separation, about 1 GB more); otherwise give an isolated vocal stem (an a
-  cappella). WAV, FLAC and MP3 are read. Analysis takes one to a few minutes.
+  --reference is the full song (WAV, FLAC or MP3): the installer adds source separation
+  (Demucs + PyTorch, about 250 MB to download, 1 GB on disk), which extracts the vocal
+  first; later analyses of the same song reuse it. For an isolated vocal stem (an a
+  cappella) add --separate no. Installed with --no-separation, the analyzer refuses
+  full songs rather than guess.
   preset.json is plain text: every setting is in real units (Hz, dB, ms) and can be
   edited, then re-rendered:
 

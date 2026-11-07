@@ -4,6 +4,11 @@ Renders a short synthetic vocal through a known EQ + compressor, analyses
 it, and checks the estimates against the same tolerances as the round-trip
 tests (EQ +-1.5 dB per 1/3-octave band; threshold +-2 dB, ratio +-20 %).
 The installer runs it after installing, like an Audio Unit validator.
+
+run_separation() checks source separation the same way: a short synthetic song (the
+synthetic vocal over drums, bass and chords) through the real Demucs worker. The vocal stem
+must have lost the band's low end (kick and bass) and be closer to the true vocal than the
+mix is.
 """
 
 from __future__ import annotations
@@ -62,4 +67,54 @@ def run(verbose: bool = True) -> bool:
     for name, passed, detail in checks:
         say(f"  {'PASS' if passed else 'FAIL'}  {name}{': ' + detail if detail else ''}")
     say(f"Self-test {'passed' if ok else 'FAILED'} ({time.time() - t0:.0f} s)")
+    return ok
+
+
+def run_separation(verbose: bool = True) -> bool:
+    import tempfile
+    from pathlib import Path
+
+    import soundfile as sf
+
+    from .separation import SeparationFailed, SeparationUnavailable, load_stem, run_demucs
+    from .synth import synthetic_song
+
+    t0 = time.time()
+    say = print if verbose else (lambda *a, **k: None)
+    mix, vocal, _ = synthetic_song(seed=31, duration_s=12.0, fs=FS)
+    with tempfile.TemporaryDirectory() as tmp:
+        song = Path(tmp) / "selftest song.wav"
+        sf.write(str(song), mix, FS, subtype="FLOAT")
+        try:
+            v_path, _ = run_demucs(song, Path(tmp) / "stems",
+                                   progress=lambda f, st: say(f"  ... {st}") if f >= 1.0 or f == 0.0 else None)
+        except (SeparationUnavailable, SeparationFailed) as exc:
+            say(f"  FAIL  source separation: {exc}")
+            say(f"Separation self-test FAILED ({time.time() - t0:.0f} s)")
+            return False
+        stem, _ = load_stem(v_path, target_fs=FS)
+    stem = stem.mean(axis=1)[: len(vocal)]
+    m = mix.mean(axis=1)[: len(stem)]
+    v = vocal[: len(stem)]
+
+    def low_db(x):
+        from scipy.signal import welch
+
+        f, p = welch(x, fs=FS, nperseg=8192)
+        return 10 * np.log10(np.sum(p[(f >= 20) & (f < 100)]) + 1e-30)
+
+    def sdr(est):  # the true vocal against the best-scaled estimate
+        g = float(np.dot(est, v) / (np.dot(est, est) + 1e-30))
+        return 10 * np.log10(np.sum(v * v) / (np.sum((v - g * est) ** 2) + 1e-30))
+
+    low_drop = low_db(m) - low_db(stem)
+    gain = sdr(stem) - sdr(m)
+    checks = [
+        ("kick and bass removed from the vocal", low_drop >= 10.0, f"{low_drop:.1f} dB less below 100 Hz (needs 10)"),
+        ("vocal extracted", gain >= 1.0, f"{sdr(stem):.1f} dB SDR vs {sdr(m):.1f} dB for the mix (needs +1)"),
+    ]
+    ok = all(passed for _, passed, _ in checks)
+    for name, passed, detail in checks:
+        say(f"  {'PASS' if passed else 'FAIL'}  {name}: {detail}")
+    say(f"Separation self-test {'passed' if ok else 'FAILED'} ({time.time() - t0:.0f} s)")
     return ok

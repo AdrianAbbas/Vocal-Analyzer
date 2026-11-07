@@ -14,7 +14,10 @@
 #   3. re-signs both bundles (ad hoc) and verifies the signatures
 #   4. restarts the Audio Unit registrar so hosts see the new copy
 #   5. runs Apple's Audio Unit validator (auval) and prints PASS or FAIL
-#   6. installs the analyzer with install.sh (Python 3.10+, the `vocalmatch` command, its self-test)
+#   6. installs the analyzer with install.sh: a private Python environment (Python 3.12 or 3.11;
+#      if neither is on this Mac, a private Python 3.12 just for Vocal Match), the `vocalmatch`
+#      command, source separation (Demucs + PyTorch: about 250 MB to download, 1 GB on disk,
+#      so Analyze can take a full song) and its self-test
 #   7. prints the next steps for GarageBand and Logic
 #
 # Options:
@@ -22,6 +25,8 @@
 #   --out-of-process  remove the sandboxSafe flag from the installed copy, so
 #                     GarageBand hosts it in a separate process (fallback only)
 #   --no-analyzer     install the plug-in only (skip step 6)
+#   --no-separation   skip source separation (Analyze then needs an isolated vocal)
+#   --private-python  always use the private Python 3.12 for the analyzer
 # (No `set -u`: macOS bash 3.2 treats an empty "$@" as unbound.)
 set -eo pipefail
 
@@ -29,12 +34,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ci=0
 out_of_process=0
 analyzer=1
+analyzer_extra=()
 for arg in "$@"; do
     case "$arg" in
         --ci) ci=1 ;;
         --out-of-process) out_of_process=1 ;;
         --no-analyzer) analyzer=0 ;;
-        -h|--help) /usr/bin/sed -n '2,26p' "${BASH_SOURCE[0]}"; exit 0 ;;
+        --no-separation|--private-python) analyzer_extra+=("$arg") ;;
+        -h|--help) /usr/bin/sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 64 ;;
     esac
 done
@@ -161,6 +168,7 @@ if [[ $analyzer == 1 ]]; then
     if [[ -f "$here/install.sh" ]]; then
         analyzer_args=(--no-next-steps)
         [[ $ci == 1 ]] && analyzer_args+=(--ci)
+        [[ ${#analyzer_extra[@]} -gt 0 ]] && analyzer_args+=("${analyzer_extra[@]}")
         set +e
         /bin/bash "$here/install.sh" "${analyzer_args[@]}" 2>&1 | /usr/bin/sed 's/^/  /'
         analyzer_result=${PIPESTATUS[0]}
@@ -173,10 +181,12 @@ fi
 
 bold "7. Next steps"
 cat <<'NEXT'
-  Make a preset with the analyzer (Terminal):
+  Make a preset in the plug-in: Analyze page > Reference song... (the full song, MP3 is
+  fine), Capture or choose your dry vocal, then Analyze. The first Analyze of a song
+  extracts its vocal (a minute or two); later ones reuse it. If something goes wrong the
+  plug-in says what, and "Show log" opens the log in ~/Library/Logs/VocalMatch.
+  Or in Terminal:
     vocalmatch analyze --reference song.mp3 --dry my_vocal.wav --out preset.json
-  (--reference: the full song if Demucs is installed (bash install.sh --with-separation),
-   otherwise an isolated vocal stem. It takes one to a few minutes.)
 
   GarageBand
     1. Open GarageBand > Settings > Audio/MIDI and make sure "Audio Units" is ticked.
